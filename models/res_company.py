@@ -33,3 +33,16 @@ class ResCompany(models.Model):
         help="Código del punto de venta (sellerCode) requerido por el GAE. "
              "Por defecto '001'.",
     )
+    gae_income_type = fields.Selection(
+        selection=[
+            ("01", "01 - Ingresos por operaciones (No financieros)"),
+            ("02", "02 - Ingresos Financieros"),
+            ("03", "03 - Ingresos Extraordinarios"),
+            ("04", "04 - Ingresos por Arrendamientos"),
+            ("05", "05 - Ingresos por Venta de Activo Depreciable"),
+            ("06", "06 - Otros Ingresos"),
+        ],
+        string="Tipo de Ingreso (eCF)",
+        default="01",
+        help="Tipo de ingreso por defecto para los comprobantes electrónicos (incomeType).",
+    )

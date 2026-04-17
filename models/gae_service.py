@@ -231,6 +231,16 @@ class GaeService:
             except Exception:
                 exchange_rate = 1.0
 
+        # E46 y E47: taxedAmountInd debe ser null
+        taxed_amount_ind = None if ecf_type in ("46", "47") else 0
+
+        # TotalTaxedAmount: solo ITBIS, excluye retenciones negativas
+        total_itbis = self._compute_total_itbis(invoice)
+
+        # InvoiceTotalAmount: para E41/E47 restamos retenciones al total
+        total_retenciones = self._compute_total_retenciones(invoice, ecf_type)
+        invoice_total = round(invoice.amount_untaxed + total_itbis - total_retenciones, 2)
+
         payload = {
             "invoiceNumber": invoice.id,
             "ecf": ecf_number,
@@ -238,14 +248,14 @@ class GaeService:
             "sellerRnc": seller_rnc,
             "sellerCode": invoice.company_id.gae_seller_code or "001",
             "creditNoteInd": 1 if ecf_type == "34" else 0,
-            "taxedAmountInd": 0,
-            "incomeType": "01",
+            "taxedAmountInd": taxed_amount_ind,
+            "incomeType": invoice.company_id.gae_income_type or "01",
             "paymentCondition": payment_condition,
             "issueDate": invoice.invoice_date.strftime("%Y-%m-%dT00:00:00") if invoice.invoice_date else "",
             "currencyType": currency_name,
             "exchangeRate": exchange_rate,
-            "InvoiceTotalAmount": round(invoice.amount_total, 2),
-            "TotalTaxedAmount": round(invoice.amount_tax, 2),
+            "InvoiceTotalAmount": invoice_total,
+            "TotalTaxedAmount": round(total_itbis, 2),
             "items": self._build_items(invoice, ecf_type),
         }
 
@@ -295,20 +305,22 @@ class GaeService:
             original_invoice = self._get_original_invoice(invoice)
             if original_invoice:
                 payload["modifiedNcf"] = original_invoice.l10n_latam_document_number or ""
-                if invoice.invoice_date:
-                    payload["modifDateNcf"] = invoice.invoice_date.strftime(
-                        "%Y-%m-%dT00:00:00"
-                    )
+                # rncNcfModified: RNC del emisor de la factura original
+                payload["rncNcfModified"] = original_invoice.company_id.vat or seller_rnc
+                # modifDateNcf: fecha de la factura ORIGINAL, no la actual
+                orig_date = original_invoice.invoice_date or original_invoice.date
+                if orig_date:
+                    payload["modifDateNcf"] = orig_date.strftime("%Y-%m-%dT00:00:00")
             # Código y descripción de razón de modificación
-            mod_code = invoice.l10n_do_ecf_modification_code
+            mod_code = getattr(invoice, "l10n_do_ecf_modification_code", None)
             if mod_code:
                 try:
                     payload["modifReasonId"] = int(mod_code)
                 except (ValueError, TypeError):
                     payload["modifReasonId"] = 1
-                payload["modifReasonDesc"] = dict(
-                    invoice._fields["l10n_do_ecf_modification_code"].selection
-                ).get(mod_code, "")
+                field = invoice._fields.get("l10n_do_ecf_modification_code")
+                if field and hasattr(field, "selection"):
+                    payload["modifReasonDesc"] = dict(field.selection).get(mod_code, "")
 
         return payload
 
@@ -330,22 +342,23 @@ class GaeService:
 
         for line in product_lines:
             tax_type = self._get_itbis_type(line, ecf_type)
-            unit_price = round(line.price_unit, 4)
+            unit_price = round(line.price_unit * (1 - (line.discount or 0) / 100), 4)
             quantity = round(line.quantity, 4)
+            # itemAmount = base sin impuestos (unitPrice × quantity)
             item_amount = round(line.price_subtotal, 2)
             discount_amount = round(
-                (line.price_unit * line.quantity) - line.price_subtotal, 2
+                line.price_unit * line.quantity - line.price_subtotal, 2
             ) if line.discount else 0.0
 
             item = {
                 "lineNumber": line_number,
-                "itemDescription": line.name or line.product_id.name or "Producto",
-                "serviceInd": self._get_service_indicator(line),
+                "itemDescription": line.name or (line.product_id.name if line.product_id else "Producto"),
+                "serviceInd": self._get_service_indicator(line),  # string "1" o "2"
                 "itemQuantity": quantity,
-                "unitMeasure": "43",  # Unidad por defecto
-                "unitPrice": unit_price,
+                "unitMeasure": self._get_unit_measure(line),
+                "unitPrice": round(line.price_unit, 4),
                 "itemAmount": item_amount,
-                "taxTypes": tax_type,
+                "taxTypes": str(tax_type),  # API espera string
             }
 
             if discount_amount > 0:
@@ -413,9 +426,10 @@ class GaeService:
         :param ecf_type: str código ECF (opcional, para reglas especiales).
         :return: int taxTypes.
         """
+        # E46 solo ITBIS 3 (0% exportación); E43 y E47 solo Exento (4)
         if ecf_type == "46":
             return 3
-        if ecf_type == "43":
+        if ecf_type in ("43", "47"):
             return 4
 
         if not line.tax_ids:
@@ -506,17 +520,77 @@ class GaeService:
 
     def _get_service_indicator(self, line):
         """
-        Determina si la línea corresponde a un servicio (1) o a un bien (2).
+        Determina si la línea corresponde a un servicio ("1") o a un bien ("2").
+        La API GAE espera string.
 
         :param line: recordset de account.move.line.
-        :return: int 1 (servicio) o 2 (bien).
+        :return: str "1" (servicio) o "2" (bien).
         """
         product = line.product_id
         if not product:
-            return 1  # Sin producto → servicio por defecto
+            return "1"  # Sin producto → servicio por defecto
         if product.type == "service":
-            return 1
-        return 2
+            return "1"
+        return "2"
+
+    def _get_unit_measure(self, line):
+        """
+        Mapea la unidad de medida de Odoo al código GAE.
+        Si no hay mapeo, usa "43" (Unidad).
+
+        :param line: recordset de account.move.line.
+        :return: str código de unidad de medida GAE.
+        """
+        # Mapeo de nombres comunes de UoM de Odoo a códigos GAE
+        UOM_MAP = {
+            "unidad": "43", "unit": "43", "units": "43", "und": "43",
+            "kg": "21", "kilogram": "21", "kilogramo": "21",
+            "g": "17", "gram": "17", "gramo": "17",
+            "l": "24", "liter": "24", "litro": "24",
+            "m": "26", "meter": "26", "metro": "26",
+            "lb": "23", "pound": "23", "libra": "23",
+            "caja": "6", "box": "6",
+            "dozen": "13", "docena": "13",
+            "hour": "43", "hora": "43",  # Servicios por hora → Unidad
+        }
+        if line.product_uom_id:
+            uom_name = (line.product_uom_id.name or "").lower().strip()
+            for key, code in UOM_MAP.items():
+                if key in uom_name:
+                    return code
+        return "43"
+
+    def _compute_total_itbis(self, invoice):
+        """
+        Calcula el ITBIS total de la factura excluyendo retenciones.
+        Solo suma impuestos con amount positivo y tipo ITBIS (16% o 18%).
+
+        :param invoice: recordset de account.move.
+        :return: float monto total de ITBIS.
+        """
+        total = 0.0
+        for line in invoice.line_ids.filtered(lambda l: l.tax_line_id):
+            tax = line.tax_line_id
+            if tax.amount_type == "percent" and tax.amount > 0 and abs(tax.amount) in (16, 18):
+                total += abs(line.balance)
+        return total
+
+    def _compute_total_retenciones(self, invoice, ecf_type):
+        """
+        Calcula el total de retenciones (ISR + ITBIS retenido) solo para E41/E47.
+
+        :param invoice: recordset de account.move.
+        :param ecf_type: str código ECF.
+        :return: float monto total de retenciones.
+        """
+        if ecf_type not in ECF_TYPES_WITH_RETENTION:
+            return 0.0
+        total = 0.0
+        for line in invoice.line_ids.filtered(lambda l: l.tax_line_id):
+            tax = line.tax_line_id
+            if tax.amount_type == "percent" and tax.amount < 0:
+                total += abs(line.balance)
+        return total
 
     def _compute_itbis_retention(self, line):
         """
