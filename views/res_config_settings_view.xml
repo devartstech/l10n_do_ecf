@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <!--
+        Extensión de la vista de Ajustes para incluir la sección
+        de Facturación Electrónica (e-CF) - GAE DGII.
+    -->
+
+    <!-- Heredar res.config.settings para agregar campos GAE -->
+    <record id="res_config_settings_view_ecf" model="ir.ui.view">
+        <field name="name">res.config.settings.view.form.ecf</field>
+        <field name="model">res.config.settings</field>
+        <field name="inherit_id" ref="base.res_config_settings_view_form"/>
+        <field name="arch" type="xml">
+            <!--
+                Se inyecta después de la sección de contactos del módulo
+                l10n_do_accounting si está instalado, o al final del formulario.
+            -->
+            <xpath expr="//div[@id='contacts_settings']" position="after">
+                <div id="ecf_settings">
+                    <h2>Facturación Electrónica (eCF)</h2>
+                    <div class="row mt16 o_settings_container">
+                        <div class="col-12 col-lg-6 o_setting_box">
+                            <div class="o_setting_left_pane"/>
+                            <div class="o_setting_right_pane">
+                                <span class="o_form_label">Configuración GAE - DGII</span>
+                                <div class="text-muted">
+                                    Configure las credenciales de acceso al Gestor de
+                                    Autorizaciones Electrónicas (GAE) de la DGII para
+                                    la emisión de Comprobantes Fiscales Electrónicos (e-CF).
+                                </div>
+                                <div class="content-group mt16">
+                                    <div class="row">
+                                        <label
+                                            for="gae_environment"
+                                            class="col-lg-4 o_light_label"
+                                        />
+                                        <field name="gae_environment" class="col-lg-8"/>
+                                    </div>
+                                    <div class="row mt8">
+                                        <label
+                                            for="gae_api_url"
+                                            class="col-lg-4 o_light_label"
+                                        />
+                                        <field name="gae_api_url" class="col-lg-8"/>
+                                    </div>
+                                    <div class="row mt8">
+                                        <label
+                                            for="gae_api_key"
+                                            class="col-lg-4 o_light_label"
+                                        />
+                                        <field
+                                            name="gae_api_key"
+                                            class="col-lg-8"
+                                            password="True"
+                                        />
+                                    </div>
+                                    <div class="row mt8">
+                                        <label
+                                            for="gae_seller_code"
+                                            class="col-lg-4 o_light_label"
+                                        />
+                                        <field name="gae_seller_code" class="col-lg-8"/>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- Extender res.config.settings model para agregar los campos related -->
+    <!-- Los campos se definen en un modelo Python separado si se necesita
+         persistencia vía config_parameter. En este caso los campos están
+         directamente en res.company y se acceden con company_id. -->
+
+</odoo>

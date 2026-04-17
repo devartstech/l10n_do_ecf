@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <!--
+        Datos de referencia para los tipos de Comprobante Fiscal Electrónico (e-CF).
+        Este archivo documenta el mapeo entre los tipos de e-CF de la DGII y los
+        tipos de movimiento contable en Odoo.
+
+        Estos registros son puramente informativos/documentales y no crean
+        registros en la base de datos. La lógica de mapeo vive en gae_service.py.
+
+        Tipos e-CF DGII (Norma 06-18 versión electrónica):
+        ─────────────────────────────────────────────────────────────
+        E31 → Factura Crédito Fiscal          (move_type: out_invoice, partner con RNC)
+        E32 → Factura de Consumo              (move_type: out_invoice, consumidor final)
+        E33 → Nota de Débito                  (move_type: out_invoice / debit_note)
+        E34 → Nota de Crédito                 (move_type: out_refund)
+        E41 → Comprobante de Compras          (move_type: in_invoice, con retenciones)
+        E43 → Gasto Menor                     (move_type: in_invoice, monto pequeño)
+        E44 → Régimen Especial de Tributación (move_type: out_invoice, régimen especial)
+        E45 → Gubernamental                   (move_type: out_invoice, entidad gov)
+        E46 → Exportación                     (move_type: out_invoice, exterior)
+        E47 → Pago al Exterior                (move_type: in_invoice, proveedor exterior)
+        ─────────────────────────────────────────────────────────────
+
+        Reglas de negocio especiales:
+        • E32: si monto < 250,000 DOP → datos del comprador son opcionales
+        • E34: creditNoteInd = 1 automáticamente
+        • E33/E34: requiere modifiedNcf (NCF/eCF de la factura original)
+        • E41/E47: retentionAgentInd = 1 por línea; se calculan itbisRetAmount e isrRetAmount
+        • E46: todas las líneas con taxTypes = 3 (ITBIS 0% exento exportación)
+        • E43: todas las líneas con taxTypes = 4 (exento sin ITBIS)
+        • sequenceExpDate: requerido para E31, E33, E41, E43, E44, E45
+
+        taxTypes (ITBIS):
+        • 0 → Sin ITBIS (no facturable)
+        • 1 → ITBIS 18%
+        • 2 → ITBIS 16%
+        • 3 → Exento ITBIS 0%
+        • 4 → Exento (no gravado / exento total)
+
+        paymentCondition:
+        • "1" → Contado
+        • "2" → Crédito (requiere paymentDeadline)
+
+        serviceInd (por línea):
+        • 1 → Servicio
+        • 2 → Bien / Producto físico
+
+        unitMeasure por defecto: "43" (Unidad)
+    -->
+</odoo>

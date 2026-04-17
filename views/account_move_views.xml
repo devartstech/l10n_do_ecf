@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <!--
+        Vista heredada de account.move para agregar los controles de
+        Facturación Electrónica (e-CF) - GAE DGII.
+    -->
+    <record id="view_move_form_ecf" model="ir.ui.view">
+        <field name="name">account.move.form.ecf</field>
+        <field name="model">account.move</field>
+        <field name="inherit_id" ref="account.view_move_form"/>
+        <field name="arch" type="xml">
+
+            <!-- Campos invisibles de soporte para condiciones -->
+            <xpath expr="//form/sheet" position="before">
+                <div class="o_field_widget" style="display:none">
+                    <field name="is_ecf_applicable" invisible="1"/>
+                    <field name="gae_status" invisible="1"/>
+                </div>
+            </xpath>
+
+            <!-- Botones en la barra de estado -->
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <!-- Botón "Enviar a DGII (eCF)": visible cuando aplica eCF,
+                     está confirmada y el estado GAE es pending o rejected -->
+                <button
+                    name="action_send_to_gae"
+                    type="object"
+                    string="Enviar a DGII (eCF)"
+                    class="btn-primary"
+                    icon="fa-paper-plane"
+                    invisible="not is_ecf_applicable or state != 'posted' or gae_status not in ('pending', 'rejected')"
+                    data-tooltip="Enviar comprobante electrónico al GAE de la DGII"
+                />
+
+                <!-- Botón "Verificar Estado": visible solo cuando el estado es 'sent' -->
+                <button
+                    name="action_check_gae_status"
+                    type="object"
+                    string="Verificar Estado GAE"
+                    class="btn-secondary"
+                    icon="fa-refresh"
+                    invisible="not is_ecf_applicable or gae_status != 'sent'"
+                    data-tooltip="Consultar el estado actual del e-CF en el GAE de la DGII"
+                />
+            </xpath>
+
+            <!-- Badge de estado GAE en la barra de estado superior -->
+            <xpath expr="//header" position="inside">
+                <field
+                    name="gae_status"
+                    widget="statusbar"
+                    statusbar_visible="pending,sent,approved,rejected"
+                    invisible="not is_ecf_applicable"
+                    options="{'clickable': '0'}"
+                />
+            </xpath>
+
+            <!-- Pestaña de información del e-CF -->
+            <xpath expr="//notebook" position="inside">
+                <page
+                    name="ecf_info"
+                    string="Información e-CF"
+                    invisible="not is_ecf_applicable"
+                >
+                    <group string="Estado en DGII (GAE)">
+                        <group>
+                            <field
+                                name="gae_status"
+                                widget="badge"
+                                decoration-success="gae_status == 'approved'"
+                                decoration-danger="gae_status == 'rejected'"
+                                decoration-warning="gae_status in ('pending', 'contingency')"
+                                decoration-info="gae_status == 'sent'"
+                            />
+                            <field name="gae_sign_date"/>
+                            <field name="gae_security_code"/>
+                        </group>
+                        <group>
+                            <field
+                                name="gae_sign_url"
+                                widget="url"
+                                attrs="{'invisible': [('gae_sign_url', '=', False)]}"
+                            />
+                            <field
+                                name="gae_error_msg"
+                                attrs="{'invisible': [('gae_error_msg', '=', False)]}"
+                                style="color: var(--danger);"
+                            />
+                        </group>
+                    </group>
+
+                    <!-- Botones de acción dentro de la pestaña -->
+                    <div class="mt-3">
+                        <button
+                            name="action_send_to_gae"
+                            type="object"
+                            string="Enviar a DGII (eCF)"
+                            class="btn btn-primary me-2"
+                            icon="fa-paper-plane"
+                            invisible="not is_ecf_applicable or state != 'posted' or gae_status not in ('pending', 'rejected')"
+                        />
+                        <button
+                            name="action_check_gae_status"
+                            type="object"
+                            string="Verificar Estado GAE"
+                            class="btn btn-secondary"
+                            icon="fa-refresh"
+                            invisible="not is_ecf_applicable or gae_status != 'sent'"
+                        />
+                    </div>
+                </page>
+            </xpath>
+
+        </field>
+    </record>
+</odoo>
