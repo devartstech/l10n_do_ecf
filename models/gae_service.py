@@ -316,12 +316,18 @@ class GaeService:
         else:
             total_taxed = round(total_itbis + total_additional, 2)
 
+        # sequenceExpDate debe ir ANTES de creditNoteInd e incomeType en el XML DGII
+        seq_exp_date = None
+        if ecf_type in ECF_TYPES_WITH_EXP_DATE:
+            seq_exp_date = self._get_sequence_exp_date(invoice)
+
         payload = {
             "invoiceNumber": invoice.id,
             "ecf": ecf_number,
             "ecfType": ecf_type,
             "sellerRnc": seller_rnc,
             "sellerCode": invoice.company_id.gae_seller_code or "001",
+            "sequenceExpDate": seq_exp_date,
             "creditNoteInd": self._compute_credit_note_ind(invoice, ecf_type),
             "taxedAmountInd": taxed_amount_ind,
             "incomeType": invoice.company_id.gae_income_type or "01",
@@ -333,12 +339,6 @@ class GaeService:
             "TotalTaxedAmount": total_taxed,
             "items": self._build_items(invoice, ecf_type),
         }
-
-        # sequenceExpDate: requerida para tipos E31, E33, E41, E43, E44, E45
-        if ecf_type in ECF_TYPES_WITH_EXP_DATE:
-            exp_date = self._get_sequence_exp_date(invoice)
-            if exp_date:
-                payload["sequenceExpDate"] = exp_date
 
         # paymentDeadline: solo cuando es a crédito — formato DD-MM-AAAA según DGII
         if payment_condition == "2" and invoice.invoice_date_due:
