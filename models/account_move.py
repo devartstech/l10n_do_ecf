@@ -203,6 +203,14 @@ class AccountMove(models.Model):
                 ) % self.l10n_latam_document_number,
                 "type": "success",
                 "sticky": False,
+                "next": {
+                    "type": "ir.actions.act_window",
+                    "res_model": "account.move",
+                    "res_id": self.id,
+                    "view_mode": "form",
+                    "views": [(False, "form")],
+                    "target": "current",
+                },
             },
         }
 
@@ -304,6 +312,14 @@ class AccountMove(models.Model):
                 ) % (ecf, new_status.upper()),
                 "type": "info" if new_status != "rejected" else "danger",
                 "sticky": new_status == "rejected",
+                "next": {
+                    "type": "ir.actions.act_window",
+                    "res_model": "account.move",
+                    "res_id": self.id,
+                    "view_mode": "form",
+                    "views": [(False, "form")],
+                    "target": "current",
+                },
             },
         }
 
