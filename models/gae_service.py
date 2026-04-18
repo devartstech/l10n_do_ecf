@@ -22,8 +22,8 @@ ECF_TYPE_MAP = {
     "E47": "47",  # Pago al Exterior
 }
 
-# ECF types that require sequenceExpDate
-ECF_TYPES_WITH_EXP_DATE = {"31", "33", "41", "43", "44", "45"}
+# ECF types that require sequenceExpDate (todos excepto E32 y E34)
+ECF_TYPES_WITH_EXP_DATE = {"31", "33", "41", "43", "44", "45", "46", "47"}
 
 # ECF types that require retentionAgentInd per line
 ECF_TYPES_WITH_RETENTION = {"41", "47"}
@@ -320,6 +320,13 @@ class GaeService:
         seq_exp_date = None
         if ecf_type in ECF_TYPES_WITH_EXP_DATE:
             seq_exp_date = self._get_sequence_exp_date(invoice)
+            if not seq_exp_date:
+                raise UserError(
+                    _("El comprobante %s (tipo E%s) requiere una fecha de vencimiento de "
+                      "secuencia (FechaVencimientoSecuencia). Configure la secuencia fiscal "
+                      "e-CF para este tipo de comprobante.")
+                    % (invoice.l10n_latam_document_number, ecf_type)
+                )
 
         payload = {
             "invoiceNumber": invoice.id,
