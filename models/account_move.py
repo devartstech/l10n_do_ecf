@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+import base64
+import io
 import logging
 
 from odoo import api, fields, models, _
@@ -273,3 +275,29 @@ class AccountMove(models.Model):
                 "sticky": False,
             },
         }
+
+    # ------------------------------------------------------------------
+    # Reporte impreso
+    # ------------------------------------------------------------------
+
+    def _get_gae_qr_code_src(self):
+        """Genera el QR code de la URL DGII como data URI (PNG base64)."""
+        self.ensure_one()
+        if not self.gae_sign_url:
+            return ""
+        try:
+            import qrcode
+            qr = qrcode.QRCode(version=None, box_size=4, border=2)
+            qr.add_data(self.gae_sign_url)
+            qr.make(fit=True)
+            img = qr.make_image(fill_color="black", back_color="white")
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            b64 = base64.b64encode(buf.getvalue()).decode()
+            return "data:image/png;base64," + b64
+        except Exception:
+            _logger.warning(
+                "GAE | No se pudo generar QR para %s",
+                self.l10n_latam_document_number,
+            )
+            return ""

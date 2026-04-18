@@ -16,6 +16,7 @@
         "data/ecf_type_data.xml",
         "views/res_config_settings_view.xml",
         "views/account_move_views.xml",
+        "views/report_invoice_ecf.xml",
     ],
     "installable": True,
     "application": False,

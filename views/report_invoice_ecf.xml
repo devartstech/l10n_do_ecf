@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <!--
+        Extiende el reporte de facturas de Odoo para incluir los datos del
+        timbre electrónico (e-CF) requeridos por la DGII:
+        - Código QR con la URL de consulta en el portal DGII
+        - Código de Seguridad
+        - Fecha de Firma
+    -->
+    <template id="report_invoice_ecf_stamp" inherit_id="account.report_invoice_document">
+        <xpath expr="//div[hasclass('page')]" position="inside">
+            <t t-if="o.is_ecf_applicable and o.gae_security_code">
+                <t t-set="gae_qr_src" t-value="o._get_gae_qr_code_src()"/>
+                <div class="row mt-4" style="border-top: 1px solid #dee2e6; padding-top: 12px;">
+                    <div class="col-4">
+                        <img t-if="gae_qr_src"
+                             t-att-src="gae_qr_src"
+                             style="width: 110px; height: 110px; display: block;"/>
+                        <div class="mt-1" style="font-size: 9pt;">
+                            <strong>Código de Seguridad:</strong>
+                            <span t-field="o.gae_security_code"/>
+                        </div>
+                        <div t-if="o.gae_sign_date" style="font-size: 9pt;">
+                            <strong>Fecha Firma:</strong>
+                            <span t-field="o.gae_sign_date"
+                                  t-options='{"widget": "datetime", "format": "dd-MM-yyyy HH:mm:ss"}'/>
+                        </div>
+                    </div>
+                </div>
+            </t>
+        </xpath>
+    </template>
+</odoo>
