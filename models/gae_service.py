@@ -436,7 +436,7 @@ class GaeService:
                 "unitMeasure": self._get_unit_measure(line),
                 "unitPrice": round(line.price_unit, 4),
                 "itemAmount": item_amount,
-                "taxCategory": tax_type,
+                "taxTypes": tax_type,
             }
 
             if discount_amount > 0:
@@ -624,14 +624,14 @@ class GaeService:
         Según DGII: 1=Bien, 2=Servicio.
 
         :param line: recordset de account.move.line.
-        :return: int 1 (bien) o 2 (servicio).
+        :return: str "1" (bien) o "2" (servicio).
         """
         product = line.product_id
         if not product:
-            return 2  # Sin producto → servicio por defecto
+            return "2"  # Sin producto → servicio por defecto
         if product.type == "service":
-            return 2
-        return 1
+            return "2"
+        return "1"
 
     def _get_unit_measure(self, line):
         """
