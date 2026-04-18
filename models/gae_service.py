@@ -285,12 +285,20 @@ class GaeService:
         # E46 y E47: taxedAmountInd debe ser null
         taxed_amount_ind = None if ecf_type in ("46", "47") else 0
 
-        # TotalTaxedAmount: solo ITBIS, excluye retenciones negativas
+        # TotalTaxedAmount = ITBIS + impuestos adicionales (ISC, propina, telecom)
         total_itbis = self._compute_total_itbis(invoice)
+        total_additional = self._compute_total_additional_taxes(invoice, ecf_type)
 
         # InvoiceTotalAmount: para E41/E47 restamos retenciones al total
         total_retenciones = self._compute_total_retenciones(invoice, ecf_type)
-        invoice_total = round(invoice.amount_untaxed + total_itbis - total_retenciones, 2)
+        invoice_total = round(invoice.amount_untaxed + total_itbis + total_additional - total_retenciones, 2)
+
+        # E43 (Gasto Menor): TotalTaxedAmount = monto total (no hay ITBIS pero se
+        # reporta el total gravable para efectos del registro fiscal)
+        if ecf_type == "43":
+            total_taxed = invoice_total
+        else:
+            total_taxed = round(total_itbis + total_additional, 2)
 
         payload = {
             "invoiceNumber": invoice.id,
@@ -306,7 +314,7 @@ class GaeService:
             "currencyType": currency_name,
             "exchangeRate": exchange_rate,
             "InvoiceTotalAmount": invoice_total,
-            "TotalTaxedAmount": round(total_itbis, 2),
+            "TotalTaxedAmount": total_taxed,
             "items": self._build_items(invoice, ecf_type),
         }
 
@@ -409,16 +417,22 @@ class GaeService:
             item = {
                 "lineNumber": line_number,
                 "itemDescription": line.name or (line.product_id.name if line.product_id else "Producto"),
-                "serviceInd": self._get_service_indicator(line),  # string "1" o "2"
+                "serviceInd": self._get_service_indicator(line),
                 "itemQuantity": quantity,
                 "unitMeasure": self._get_unit_measure(line),
                 "unitPrice": round(line.price_unit, 4),
                 "itemAmount": item_amount,
-                "taxTypes": str(tax_type),  # API espera string
+                "taxTypes": tax_type,  # int32 per spec
             }
 
             if discount_amount > 0:
                 item["discountAmount"] = discount_amount
+
+            # Impuestos adicionales (ISC, propina, telecom) — no aplica E41/E43/E47
+            if ecf_type not in ("41", "43", "47"):
+                additional = self._get_additional_taxes(line)
+                if additional:
+                    item["aditionalTaxes"] = additional
 
             # Retenciones: solo para E41 y E47
             if ecf_type in ECF_TYPES_WITH_RETENTION:
@@ -681,6 +695,60 @@ class GaeService:
         ):
             isr_amount += line.price_subtotal * (abs(tax.amount) / 100)
         return isr_amount
+
+    def _get_additional_taxes(self, line):
+        """
+        Construye el array aditionalTaxes para una línea de factura.
+        Solo incluye impuestos que tienen l10n_do_gae_additional_tax_type configurado
+        (ISC, propina legal, telecom, etc.). No incluye ITBIS ni retenciones.
+
+        :param line: recordset de account.move.line.
+        :return: list de dicts [{type, rate, amount}] o None.
+        """
+        additional = []
+        for tax in line.tax_ids:
+            gae_type = getattr(tax, "l10n_do_gae_additional_tax_type", None)
+            if not gae_type:
+                continue
+            # Excluir ITBIS (16%/18%) y retenciones (monto negativo)
+            if tax.amount_type == "percent" and abs(tax.amount) in (16, 18):
+                continue
+            if tax.amount < 0:
+                continue
+            rate = abs(tax.amount)
+            amount = round(line.price_subtotal * (rate / 100), 2)
+            additional.append({
+                "type": gae_type,
+                "rate": rate,
+                "amount": amount,
+            })
+        return additional if additional else None
+
+    def _compute_total_additional_taxes(self, invoice, ecf_type):
+        """
+        Calcula el total de impuestos adicionales (ISC, propina, telecom)
+        en toda la factura. No aplica para E41, E43, E47.
+
+        :param invoice: recordset de account.move.
+        :param ecf_type: str código ECF.
+        :return: float monto total.
+        """
+        if ecf_type in ("41", "43", "47"):
+            return 0.0
+        total = 0.0
+        for line in invoice.invoice_line_ids.filtered(
+            lambda l: l.display_type not in ("line_section", "line_note")
+        ):
+            for tax in line.tax_ids:
+                gae_type = getattr(tax, "l10n_do_gae_additional_tax_type", None)
+                if not gae_type:
+                    continue
+                if tax.amount_type == "percent" and abs(tax.amount) in (16, 18):
+                    continue
+                if tax.amount < 0:
+                    continue
+                total += line.price_subtotal * (abs(tax.amount) / 100)
+        return round(total, 2)
 
     @staticmethod
     def _extract_error_message(response):

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo>
+    <record id="view_tax_form_ecf" model="ir.ui.view">
+        <field name="name">account.tax.form.ecf</field>
+        <field name="model">account.tax</field>
+        <field name="inherit_id" ref="account.view_tax_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//page[@name='advanced_options']" position="after">
+                <page name="ecf_gae" string="e-CF / GAE">
+                    <group>
+                        <field name="l10n_do_gae_additional_tax_type"/>
+                    </group>
+                    <p class="text-muted" style="font-size:11px;">
+                        Configure este campo solo para impuestos adicionales DGII (ISC, propina legal,
+                        telecom). No configurar en impuestos ITBIS (18%/16%) ni retenciones.
+                        Al configurarlo, el impuesto se incluirá en el array
+                        <code>aditionalTaxes</code> del payload GAE por cada línea de factura.
+                    </p>
+                </page>
+            </xpath>
+        </field>
+    </record>
+</odoo>
