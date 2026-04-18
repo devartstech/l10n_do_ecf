@@ -77,11 +77,11 @@
                             <field
                                 name="gae_sign_url"
                                 widget="url"
-                                attrs="{'invisible': [('gae_sign_url', '=', False)]}"
+                                invisible="not gae_sign_url"
                             />
                             <field
                                 name="gae_error_msg"
-                                attrs="{'invisible': [('gae_error_msg', '=', False)]}"
+                                invisible="not gae_error_msg"
                                 style="color: var(--danger);"
                             />
                         </group>
