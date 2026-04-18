@@ -167,10 +167,7 @@ class AccountMove(models.Model):
                 _logger.warning("GAE | No se pudo parsear la fecha de firma: %s", raw_date)
 
         self.write({
-            "gae_status": "approved",
-            "gae_security_code": result.get("code", ""),
-            "gae_sign_url": result.get("url", ""),
-            "gae_sign_date": sign_date,
+            "gae_status": "sent",
             "gae_error_msg": False,
         })
 
@@ -180,9 +177,9 @@ class AccountMove(models.Model):
             "params": {
                 "title": _("e-CF Enviado"),
                 "message": _(
-                    "El comprobante %s fue enviado exitosamente al GAE. "
-                    "Código de seguridad: %s"
-                ) % (self.l10n_latam_document_number, result.get("code", "")),
+                    "El comprobante %s fue enviado al GAE. "
+                    "GAE procesa en lote — use 'Verificar Estado GAE' para obtener el resultado."
+                ) % self.l10n_latam_document_number,
                 "type": "success",
                 "sticky": False,
             },
@@ -243,13 +240,24 @@ class AccountMove(models.Model):
 
         write_vals = {"gae_status": new_status, "gae_error_msg": False}
 
-        # Actualizar código y URL si los devuelve la consulta de estado
         code = data.get("code") or data.get("Code") or data.get("codigo")
         url = data.get("url") or data.get("Url") or data.get("URL")
+        raw_date = data.get("date") or data.get("Date") or data.get("fecha")
         if code:
             write_vals["gae_security_code"] = code
         if url:
             write_vals["gae_sign_url"] = url
+        if raw_date:
+            try:
+                from datetime import datetime
+                for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f"):
+                    try:
+                        write_vals["gae_sign_date"] = datetime.strptime(raw_date[:26], fmt)
+                        break
+                    except ValueError:
+                        continue
+            except Exception:
+                _logger.warning("GAE | No se pudo parsear la fecha de firma en status: %s", raw_date)
 
         self.write(write_vals)
 

@@ -38,7 +38,7 @@
                     string="Verificar Estado GAE"
                     class="btn-secondary"
                     icon="fa-refresh"
-                    invisible="not is_ecf_applicable or gae_status != 'sent'"
+                    invisible="not is_ecf_applicable or gae_status == 'pending'"
                 />
             </xpath>
 
@@ -103,7 +103,7 @@
                             string="Verificar Estado GAE"
                             class="btn btn-secondary"
                             icon="fa-refresh"
-                            invisible="not is_ecf_applicable or gae_status != 'sent'"
+                            invisible="not is_ecf_applicable or gae_status == 'pending'"
                         />
                     </div>
                 </page>
