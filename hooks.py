@@ -20,11 +20,12 @@ _OUR_DOC_TYPE_XMLIDS = [
 ]
 
 
-def post_init_hook(env):
+def _archive_our_doc_types_if_needed(env):
     """
     Si l10n_do_accounting está instalado, archiva los tipos de documento ECF
     creados por este módulo para evitar duplicados en el selector de facturas.
     l10n_do_accounting ya provee sus propios registros E31-E47 con secuencias.
+    Corre tanto en instalación nueva como en cada actualización del módulo.
     """
     l10n_do_accounting = env["ir.module.module"].search(
         [("name", "=", "l10n_do_accounting"), ("state", "=", "installed")],
@@ -41,7 +42,7 @@ def post_init_hook(env):
     records_to_archive = env["l10n_latam.document.type"]
     for xmlid in _OUR_DOC_TYPE_XMLIDS:
         rec = env.ref(xmlid, raise_if_not_found=False)
-        if rec:
+        if rec and rec.active:
             records_to_archive |= rec
 
     if records_to_archive:
@@ -51,3 +52,11 @@ def post_init_hook(env):
             len(records_to_archive),
             ", ".join(records_to_archive.mapped("doc_code_prefix")),
         )
+
+
+def post_init_hook(env):
+    _archive_our_doc_types_if_needed(env)
+
+
+def post_migrate(env, version):
+    _archive_our_doc_types_if_needed(env)

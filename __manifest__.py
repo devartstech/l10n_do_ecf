@@ -24,6 +24,7 @@
         "python": ["qrcode", "requests"],
     },
     "post_init_hook": "post_init_hook",
+    "post_migrate": "post_migrate",
     "installable": True,
     "application": False,
     "auto_install": False,
