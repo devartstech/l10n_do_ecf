@@ -516,6 +516,17 @@ class GaeService:
         if ecf_type in ("43", "47"):
             return 4
 
+        # E44 (Regímenes Especiales): solo ITBIS no facturable (4) o ITBIS 0% (3)
+        # La DGII no admite taxCategory 1 ni 2 para este tipo de comprobante.
+        if ecf_type == "44":
+            if line.tax_ids:
+                for tax in line.tax_ids:
+                    if tax.amount_type == "percent" and tax.amount == 0:
+                        name_lower = (tax.name or "").lower()
+                        if "0%" in name_lower or "itbis 0" in name_lower:
+                            return 3
+            return 4
+
         if not line.tax_ids:
             return 0
 
