@@ -248,6 +248,7 @@ class AccountMove(models.Model):
             .strip()
         )
         status_map = {
+            "aceptado": "approved",
             "aprobado": "approved",
             "approved": "approved",
             "rechazado": "rejected",
