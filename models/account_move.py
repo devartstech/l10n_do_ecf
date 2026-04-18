@@ -207,22 +207,24 @@ class AccountMove(models.Model):
         rnc = self.company_id.vat or ""
         ecf = self.l10n_latam_document_number
 
+        # 1. Consultar estado de procesamiento batch (GetInvoiceStatus)
         try:
-            data = service.get_invoice_status(rnc, ecf)
+            status_data = service.get_invoice_status(rnc, ecf)
         except UserError as e:
             self.write({"gae_error_msg": str(e.args[0])[:512] if e.args else "Error"})
             raise
         except Exception as e:
-            _logger.exception(
-                "GAE | Error inesperado al consultar estado de e-CF %s", ecf
-            )
+            _logger.exception("GAE | Error inesperado al consultar estado de e-CF %s", ecf)
             raise UserError(
                 _("Error inesperado al consultar estado en el GAE: %s") % str(e)
             )
 
-        # Mapeo de estados posibles del GAE a nuestros valores internos
+        # Mapeo de estados posibles del GAE a valores internos
         gae_state_raw = (
-            str(data.get("status") or data.get("Status") or data.get("estado") or "")
+            str(
+                status_data.get("status") or status_data.get("Status")
+                or status_data.get("estado") or ""
+            )
             .lower()
             .strip()
         )
@@ -239,27 +241,36 @@ class AccountMove(models.Model):
             "pending": "pending",
         }
         new_status = status_map.get(gae_state_raw, self.gae_status)
-
         write_vals = {"gae_status": new_status, "gae_error_msg": False}
 
-        code = data.get("code") or data.get("Code") or data.get("codigo")
-        url = data.get("url") or data.get("Url") or data.get("URL")
-        raw_date = data.get("date") or data.get("Date") or data.get("fecha")
-        if code:
-            write_vals["gae_security_code"] = code
-        if url:
-            write_vals["gae_sign_url"] = url
-        if raw_date:
+        # Si fue rechazado, capturar detalle del error desde 'details'
+        if new_status == "rejected":
+            details = status_data.get("details") or []
+            if details and isinstance(details, list):
+                error_msgs = [str(d.get("description") or d.get("message") or d) for d in details]
+                write_vals["gae_error_msg"] = "; ".join(error_msgs)[:512]
+
+        # 2. Si fue aprobado, obtener timbre (GetInvoiceInfo → code, url, date)
+        if new_status == "approved":
             try:
-                from datetime import datetime
-                for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f"):
-                    try:
-                        write_vals["gae_sign_date"] = datetime.strptime(raw_date[:26], fmt)
-                        break
-                    except ValueError:
-                        continue
+                info = service.get_invoice_info(rnc, ecf)
+                if info.get("code"):
+                    write_vals["gae_security_code"] = info["code"]
+                if info.get("url"):
+                    write_vals["gae_sign_url"] = info["url"]
+                raw_date = info.get("date", "")
+                if raw_date:
+                    from datetime import datetime
+                    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f"):
+                        try:
+                            write_vals["gae_sign_date"] = datetime.strptime(raw_date[:26], fmt)
+                            break
+                        except ValueError:
+                            continue
             except Exception:
-                _logger.warning("GAE | No se pudo parsear la fecha de firma en status: %s", raw_date)
+                _logger.warning(
+                    "GAE | No se pudo obtener timbre del e-CF %s aprobado", ecf
+                )
 
         self.write(write_vals)
 
@@ -271,8 +282,8 @@ class AccountMove(models.Model):
                 "message": _(
                     "Estado del e-CF %s en el GAE: %s"
                 ) % (ecf, new_status.upper()),
-                "type": "info",
-                "sticky": False,
+                "type": "info" if new_status != "rejected" else "danger",
+                "sticky": new_status == "rejected",
             },
         }
 

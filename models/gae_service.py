@@ -197,6 +197,57 @@ class GaeService:
                 _("Respuesta inválida del GAE al consultar estado: %s") % response.text
             )
 
+    def get_invoice_info(self, rnc, ecf):
+        """
+        Obtiene el timbre digital (código de seguridad, URL y fecha de firma)
+        de un e-CF ya aprobado por el GAE.
+
+        Endpoint: GET /api/Invoice/GetInvoiceInfo
+        Retorna invoiceResponses { date, code, url }.
+        """
+        url = "{}/Invoice/GetInvoiceInfo".format(
+            self.company.gae_api_url.rstrip("/")
+        )
+        params = {"rnc": rnc, "ecf": ecf}
+
+        _logger.info("GAE | Consultando timbre de e-CF %s (RNC: %s)", ecf, rnc)
+
+        try:
+            response = requests.get(
+                url,
+                params=params,
+                headers=self._get_headers(),
+                timeout=REQUEST_TIMEOUT,
+            )
+        except requests.exceptions.Timeout:
+            raise UserError(
+                _("Tiempo de espera agotado al obtener timbre del GAE.")
+            )
+        except requests.exceptions.RequestException as e:
+            raise UserError(
+                _("Error al obtener timbre del GAE: %s") % str(e)
+            )
+
+        if response.status_code != 200:
+            raise UserError(
+                _("El GAE devolvió HTTP %s al consultar timbre del e-CF %s.")
+                % (response.status_code, ecf)
+            )
+
+        try:
+            data = response.json()
+        except ValueError:
+            raise UserError(
+                _("Respuesta inválida del GAE al consultar timbre: %s") % response.text
+            )
+
+        invoice_responses = data.get("invoiceResponses") or {}
+        return {
+            "code": invoice_responses.get("code", ""),
+            "url": invoice_responses.get("url", ""),
+            "date": invoice_responses.get("date", ""),
+        }
+
     # ------------------------------------------------------------------
     # Construcción del payload
     # ------------------------------------------------------------------
@@ -281,17 +332,18 @@ class GaeService:
             digits = digits[1:]
         buyer_phone = "{}-{}-{}".format(digits[:3], digits[3:6], digits[6:]) if len(digits) == 10 else raw_phone
 
-        # E32 con monto < 250,000 DOP: datos del comprador opcionales
-        if ecf_type == "32" and invoice.amount_total < 250000:
-            if buyer_rnc:
-                payload["buyerRnc"] = buyer_rnc
-            if buyer_name:
-                payload["buyerBusinessName"] = buyer_name
+        # E43 (Gasto Menor) y E47 (Pago Exterior): sin datos de comprador
+        if ecf_type == "43":
+            pass
         elif ecf_type == "47":
-            # E47: DNI extranjero en lugar de RNC
+            # Identificador del beneficiario en el exterior (opcional)
             foreign_dni = invoice.partner_id.vat or ""
             if foreign_dni:
                 payload["foreignDni"] = foreign_dni
+        # E32 con monto < 250,000 DOP: datos del comprador opcionales
+        elif ecf_type == "32" and invoice.amount_total < 250000:
+            if buyer_rnc:
+                payload["buyerRnc"] = buyer_rnc
             if buyer_name:
                 payload["buyerBusinessName"] = buyer_name
         else:
