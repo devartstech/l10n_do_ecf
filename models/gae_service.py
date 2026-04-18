@@ -252,6 +252,22 @@ class GaeService:
     # Construcción del payload
     # ------------------------------------------------------------------
 
+    def _compute_credit_note_ind(self, invoice, ecf_type):
+        """
+        creditNoteInd según DGII:
+        0 = factura original emitida hace ≤ 30 días (tiene derecho a rebajar ITBIS)
+        1 = factura original emitida hace > 30 días (no tiene derecho a rebajar ITBIS)
+        Solo aplica para E34. Para otros tipos siempre 0.
+        """
+        if ecf_type != "34":
+            return 0
+        original = self._get_original_invoice(invoice)
+        if not original or not original.invoice_date:
+            return 0
+        from datetime import date
+        delta = (invoice.invoice_date or date.today()) - original.invoice_date
+        return 1 if delta.days > 30 else 0
+
     def _build_payload(self, invoice):
         """
         Construye el JSON completo que se enviará al endpoint POST /api/Invoice.
@@ -306,7 +322,7 @@ class GaeService:
             "ecfType": ecf_type,
             "sellerRnc": seller_rnc,
             "sellerCode": invoice.company_id.gae_seller_code or "001",
-            "creditNoteInd": 1 if ecf_type == "34" else 0,
+            "creditNoteInd": self._compute_credit_note_ind(invoice, ecf_type),
             "taxedAmountInd": taxed_amount_ind,
             "incomeType": invoice.company_id.gae_income_type or "01",
             "paymentCondition": payment_condition,
@@ -324,11 +340,9 @@ class GaeService:
             if exp_date:
                 payload["sequenceExpDate"] = exp_date
 
-        # paymentDeadline: solo cuando es a crédito
+        # paymentDeadline: solo cuando es a crédito — formato DD-MM-AAAA según DGII
         if payment_condition == "2" and invoice.invoice_date_due:
-            payload["paymentDeadline"] = invoice.invoice_date_due.strftime(
-                "%Y-%m-%dT00:00:00"
-            )
+            payload["paymentDeadline"] = invoice.invoice_date_due.strftime("%d-%m-%Y")
 
         # Datos del comprador
         buyer_rnc = invoice.partner_id.vat or ""
@@ -371,10 +385,10 @@ class GaeService:
                 payload["modifiedNcf"] = original_invoice.l10n_latam_document_number or ""
                 # rncNcfModified: RNC del emisor de la factura original
                 payload["rncNcfModified"] = original_invoice.company_id.vat or seller_rnc
-                # modifDateNcf: fecha de la factura ORIGINAL, no la actual
+                # modifDateNcf: fecha de la factura ORIGINAL — formato DD-MM-AAAA según DGII
                 orig_date = original_invoice.invoice_date or original_invoice.date
                 if orig_date:
-                    payload["modifDateNcf"] = orig_date.strftime("%Y-%m-%dT00:00:00")
+                    payload["modifDateNcf"] = orig_date.strftime("%d-%m-%Y")
             # Código y descripción de razón de modificación
             mod_code = getattr(invoice, "l10n_do_ecf_modification_code", None)
             if mod_code:
@@ -422,7 +436,7 @@ class GaeService:
                 "unitMeasure": self._get_unit_measure(line),
                 "unitPrice": round(line.price_unit, 4),
                 "itemAmount": item_amount,
-                "taxTypes": tax_type,  # int32 per spec
+                "taxCategory": tax_type,
             }
 
             if discount_amount > 0:
@@ -555,10 +569,11 @@ class GaeService:
         """
         fiscal_seq = getattr(invoice, "l10n_do_fiscal_sequence_id", None)
         if fiscal_seq and getattr(fiscal_seq, "expiration_date", None):
-            return fiscal_seq.expiration_date.strftime("%Y-%m-%dT00:00:00")
+            # sequenceExpDate: formato YYYY-MM-DD según DGII spec
+            return fiscal_seq.expiration_date.strftime("%Y-%m-%d")
         exp_date = getattr(invoice, "l10n_do_ecf_sequence_exp_date", None)
         if exp_date:
-            return exp_date.strftime("%Y-%m-%dT00:00:00")
+            return exp_date.strftime("%Y-%m-%d")
         return None
 
     def _get_partner_address(self, partner):
@@ -594,18 +609,18 @@ class GaeService:
 
     def _get_service_indicator(self, line):
         """
-        Determina si la línea corresponde a un servicio ("1") o a un bien ("2").
-        La API GAE espera string.
+        Determina si la línea corresponde a un bien (1) o servicio (2).
+        Según DGII: 1=Bien, 2=Servicio.
 
         :param line: recordset de account.move.line.
-        :return: str "1" (servicio) o "2" (bien).
+        :return: int 1 (bien) o 2 (servicio).
         """
         product = line.product_id
         if not product:
-            return "1"  # Sin producto → servicio por defecto
+            return 2  # Sin producto → servicio por defecto
         if product.type == "service":
-            return "1"
-        return "2"
+            return 2
+        return 1
 
     def _get_unit_measure(self, line):
         """
