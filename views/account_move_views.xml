@@ -87,6 +87,22 @@
                         </group>
                     </group>
 
+                    <!-- Campos de modificación (notas crédito/débito) -->
+                    <group
+                        string="Datos de Modificación"
+                        invisible="not is_ecf_applicable or move_type not in ('out_refund', 'in_refund')"
+                    >
+                        <field name="l10n_do_ecf_modification_code"/>
+                    </group>
+
+                    <!-- Fecha vencimiento secuencia (standalone, sin l10n_do_accounting) -->
+                    <group
+                        string="Secuencia Fiscal"
+                        invisible="not is_ecf_applicable"
+                    >
+                        <field name="l10n_do_ecf_sequence_exp_date"/>
+                    </group>
+
                     <!-- Botones de acción dentro de la pestaña -->
                     <div class="mt-3">
                         <button

@@ -547,14 +547,18 @@ class GaeService:
     def _get_sequence_exp_date(self, invoice):
         """
         Obtiene la fecha de vencimiento de la secuencia fiscal del comprobante.
-        Viene de account.fiscal.sequence vinculada a la factura.
+        Usa l10n_do_fiscal_sequence_id (de l10n_do_accounting) si está disponible,
+        con fallback al campo propio l10n_do_ecf_sequence_exp_date.
 
         :param invoice: recordset de account.move.
         :return: str con fecha en formato ISO o None.
         """
         fiscal_seq = getattr(invoice, "l10n_do_fiscal_sequence_id", None)
-        if fiscal_seq and fiscal_seq.expiration_date:
+        if fiscal_seq and getattr(fiscal_seq, "expiration_date", None):
             return fiscal_seq.expiration_date.strftime("%Y-%m-%dT00:00:00")
+        exp_date = getattr(invoice, "l10n_do_ecf_sequence_exp_date", None)
+        if exp_date:
+            return exp_date.strftime("%Y-%m-%dT00:00:00")
         return None
 
     def _get_partner_address(self, partner):

@@ -19,6 +19,20 @@
                 <div id="ecf_settings">
                     <h2>Facturación Electrónica (eCF)</h2>
                     <div class="row mt16 o_settings_container">
+                        <!-- Habilitación de emisión e-CF -->
+                        <div class="col-12 col-lg-6 o_setting_box">
+                            <div class="o_setting_left_pane">
+                                <field name="l10n_do_ecf_issuer"/>
+                            </div>
+                            <div class="o_setting_right_pane">
+                                <label for="l10n_do_ecf_issuer"/>
+                                <div class="text-muted">
+                                    Activa la emisión de Comprobantes Fiscales Electrónicos (e-CF).
+                                    Usa secuencias con prefijo E (E31, E32, etc.).
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Credenciales GAE -->
                         <div class="col-12 col-lg-6 o_setting_box">
                             <div class="o_setting_left_pane"/>
                             <div class="o_setting_right_pane">

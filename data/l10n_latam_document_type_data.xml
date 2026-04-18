@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<odoo noupdate="1">
+    <!--
+        Tipos de Comprobante Fiscal Electrónico (e-CF) para República Dominicana.
+        Se crean solo si no existen ya (noupdate="1").
+        Si l10n_do_accounting está instalado, estos registros pueden coexistir;
+        los de l10n_do_accounting tendrán sus propios IDs externos.
+    -->
+
+    <!-- E31 - Factura de Crédito Fiscal Electrónica -->
+    <record id="ecf_e31_fiscal" model="l10n_latam.document.type">
+        <field name="name">Crédito Fiscal Electrónica (E31)</field>
+        <field name="code">E</field>
+        <field name="doc_code_prefix">E31</field>
+        <field name="internal_type">invoice</field>
+        <field name="sequence">160</field>
+        <field name="active">True</field>
+    </record>
+
+    <!-- E32 - Factura de Consumo Electrónica -->
+    <record id="ecf_e32_consumer" model="l10n_latam.document.type">
+        <field name="name">Consumo Electrónica (E32)</field>
+        <field name="code">E</field>
+        <field name="doc_code_prefix">E32</field>
+        <field name="internal_type">invoice</field>
+        <field name="sequence">170</field>
+        <field name="active">True</field>
+    </record>
+
+    <!-- E33 - Nota de Débito Electrónica -->
+    <record id="ecf_e33_debit_note" model="l10n_latam.document.type">
+        <field name="name">Nota de Débito Electrónica (E33)</field>
+        <field name="code">E</field>
+        <field name="doc_code_prefix">E33</field>
+        <field name="internal_type">debit_note</field>
+        <field name="sequence">180</field>
+        <field name="active">True</field>
+    </record>
+
+    <!-- E34 - Nota de Crédito Electrónica -->
+    <record id="ecf_e34_credit_note" model="l10n_latam.document.type">
+        <field name="name">Nota de Crédito Electrónica (E34)</field>
+        <field name="code">E</field>
+        <field name="doc_code_prefix">E34</field>
+        <field name="internal_type">credit_note</field>
+        <field name="sequence">190</field>
+        <field name="active">True</field>
+    </record>
+
+    <!-- E41 - Comprobante de Compras Electrónico -->
+    <record id="ecf_e41_purchase" model="l10n_latam.document.type">
+        <field name="name">Compras Electrónica (E41)</field>
+        <field name="code">E</field>
+        <field name="doc_code_prefix">E41</field>
+        <field name="internal_type">invoice</field>
+        <field name="sequence">200</field>
+        <field name="active">True</field>
+    </record>
+
+    <!-- E43 - Gasto Menor Electrónico -->
+    <record id="ecf_e43_minor" model="l10n_latam.document.type">
+        <field name="name">Gasto Menor Electrónica (E43)</field>
+        <field name="code">E</field>
+        <field name="doc_code_prefix">E43</field>
+        <field name="internal_type">invoice</field>
+        <field name="sequence">220</field>
+        <field name="active">True</field>
+    </record>
+
+    <!-- E44 - Régimen Especial de Tributación Electrónico -->
+    <record id="ecf_e44_special" model="l10n_latam.document.type">
+        <field name="name">Régimen Especial Electrónica (E44)</field>
+        <field name="code">E</field>
+        <field name="doc_code_prefix">E44</field>
+        <field name="internal_type">invoice</field>
+        <field name="sequence">230</field>
+        <field name="active">True</field>
+    </record>
+
+    <!-- E45 - Gubernamental Electrónico -->
+    <record id="ecf_e45_gov" model="l10n_latam.document.type">
+        <field name="name">Gubernamental Electrónica (E45)</field>
+        <field name="code">E</field>
+        <field name="doc_code_prefix">E45</field>
+        <field name="internal_type">invoice</field>
+        <field name="sequence">240</field>
+        <field name="active">True</field>
+    </record>
+
+    <!-- E46 - Exportación Electrónica -->
+    <record id="ecf_e46_export" model="l10n_latam.document.type">
+        <field name="name">Exportación Electrónica (E46)</field>
+        <field name="code">E</field>
+        <field name="doc_code_prefix">E46</field>
+        <field name="internal_type">invoice</field>
+        <field name="sequence">250</field>
+        <field name="active">True</field>
+    </record>
+
+    <!-- E47 - Pago al Exterior Electrónico -->
+    <record id="ecf_e47_exterior" model="l10n_latam.document.type">
+        <field name="name">Pago al Exterior Electrónica (E47)</field>
+        <field name="code">E</field>
+        <field name="doc_code_prefix">E47</field>
+        <field name="internal_type">invoice</field>
+        <field name="sequence">260</field>
+        <field name="active">True</field>
+    </record>
+
+</odoo>

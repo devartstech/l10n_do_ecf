@@ -34,3 +34,9 @@ class ResConfigSettings(models.TransientModel):
         readonly=False,
         help="Código del punto de venta requerido por el GAE (por defecto '001').",
     )
+    l10n_do_ecf_issuer = fields.Boolean(
+        string="Es emisor de e-CF",
+        related="company_id.l10n_do_ecf_issuer",
+        readonly=False,
+        help="Habilita la emisión de Comprobantes Fiscales Electrónicos (e-CF).",
+    )

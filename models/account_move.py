@@ -59,6 +59,25 @@ class AccountMove(models.Model):
         copy=False,
         help="Último mensaje de error recibido del GAE.",
     )
+    l10n_do_ecf_modification_code = fields.Selection(
+        selection=[
+            ("1", "01 - Anulación de comprobante"),
+            ("2", "02 - Corrección de monto"),
+            ("3", "03 - Cambio de tipo de comprobante"),
+            ("4", "04 - Corrección de datos del comprador"),
+            ("5", "05 - Otros"),
+        ],
+        string="Razón de Modificación (e-CF)",
+        copy=False,
+        help="Código de razón de modificación requerido para notas de crédito (E34) "
+             "y débito (E33) electrónicas.",
+    )
+    l10n_do_ecf_sequence_exp_date = fields.Date(
+        string="Vencimiento Secuencia e-CF",
+        copy=False,
+        help="Fecha de vencimiento de la secuencia fiscal electrónica. "
+             "Se usa cuando no está instalado l10n_do_accounting.",
+    )
     is_ecf_applicable = fields.Boolean(
         string="Aplica e-CF",
         compute="_compute_is_ecf_applicable",

@@ -46,3 +46,8 @@ class ResCompany(models.Model):
         default="01",
         help="Tipo de ingreso por defecto para los comprobantes electrónicos (incomeType).",
     )
+    l10n_do_ecf_issuer = fields.Boolean(
+        string="Es emisor de e-CF",
+        help="Habilita la emisión de Comprobantes Fiscales Electrónicos (e-CF) para "
+             "esta empresa. Cuando está activo, la facturación usa secuencias electrónicas.",
+    )
