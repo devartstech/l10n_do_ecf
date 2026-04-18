@@ -275,7 +275,10 @@ class GaeService:
         buyer_rnc = invoice.partner_id.vat or ""
         buyer_name = invoice.partner_id.name or ""
         buyer_address = self._get_partner_address(invoice.partner_id)
-        buyer_phone = invoice.partner_id.phone or invoice.partner_id.mobile or ""
+        raw_phone = invoice.partner_id.phone or invoice.partner_id.mobile or ""
+        buyer_phone = "".join(filter(str.isdigit, raw_phone))
+        if buyer_phone.startswith("1") and len(buyer_phone) == 11:
+            buyer_phone = buyer_phone[1:]  # quitar prefijo país
 
         # E32 con monto < 250,000 DOP: datos del comprador opcionales
         if ecf_type == "32" and invoice.amount_total < 250000:
