@@ -9,23 +9,44 @@
     -->
     <template id="report_invoice_ecf_stamp" inherit_id="account.report_invoice_document">
         <xpath expr="//div[hasclass('page')]" position="inside">
-            <t t-if="o.is_ecf_applicable and o.gae_security_code">
-                <t t-set="gae_qr_src" t-value="o._get_gae_qr_code_src()"/>
-                <div class="row mt-4" style="border-top: 1px solid #dee2e6; padding-top: 12px;">
-                    <div class="col-4">
-                        <img t-if="gae_qr_src"
-                             t-att-src="gae_qr_src"
-                             style="width: 110px; height: 110px; display: block;"/>
-                        <div class="mt-1" style="font-size: 9pt;">
-                            <strong>Código de Seguridad:</strong>
-                            <span t-field="o.gae_security_code"/>
+            <t t-if="o.is_ecf_applicable">
+                <t t-set="gae_qr_src" t-value="o._get_gae_qr_code_src() if o.gae_security_code else ''"/>
+                <div class="row mt-4" style="border-top: 2px solid #1a237e; padding-top: 12px; margin-top: 16px;">
+
+                    <!-- QR + timbre (solo cuando aprobado) -->
+                    <t t-if="o.gae_security_code">
+                        <div class="col-3 text-center">
+                            <img t-if="gae_qr_src"
+                                 t-att-src="gae_qr_src"
+                                 style="width: 110px; height: 110px; display: block; margin: 0 auto;"/>
                         </div>
-                        <div t-if="o.gae_sign_date" style="font-size: 9pt;">
-                            <strong>Fecha Firma:</strong>
-                            <span t-field="o.gae_sign_date"
-                                  t-options='{"widget": "datetime", "format": "dd-MM-yyyy HH:mm:ss"}'/>
+                        <div class="col-9" style="font-size: 9pt; padding-left: 8px;">
+                            <div style="color: #1a237e; font-weight: bold; font-size: 10pt; margin-bottom: 4px;">
+                                Comprobante Fiscal Electrónico — DGII
+                            </div>
+                            <div>
+                                <strong>Código de Seguridad: </strong>
+                                <span t-field="o.gae_security_code"/>
+                            </div>
+                            <div t-if="o.gae_sign_date">
+                                <strong>Fecha de Firma: </strong>
+                                <span t-field="o.gae_sign_date"
+                                      t-options='{"widget": "datetime", "format": "dd/MM/yyyy HH:mm:ss"}'/>
+                            </div>
+                            <div t-if="o.gae_sign_url" style="margin-top: 4px; color: #555; word-break: break-all;">
+                                <strong>Verificar en: </strong>
+                                <span t-esc="o.gae_sign_url"/>
+                            </div>
                         </div>
-                    </div>
+                    </t>
+
+                    <!-- Pendiente de aprobación -->
+                    <t t-else="">
+                        <div class="col-12" style="font-size: 9pt; color: #666; font-style: italic;">
+                            Comprobante Fiscal Electrónico — Pendiente de timbre DGII
+                        </div>
+                    </t>
+
                 </div>
             </t>
         </xpath>
