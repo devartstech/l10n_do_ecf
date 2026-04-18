@@ -1,15 +1,16 @@
 # -*- coding: utf-8 -*-
 
 {
-    "name": "Facturación Electrónica (eCF) - GAE",
-    "summary": """
-        Integración con el Gestor de Autorizaciones Electrónicas (GAE) de la DGII
-        para la emisión de Comprobantes Fiscales Electrónicos (e-CF) en
-        República Dominicana.""",
+    "name": "Facturación Electrónica (e-CF) — GAE · República Dominicana",
+    "summary": "Emisión de e-CF vía GAE Digital (DGII) — E31 a E47, timbre digital, QR en PDF.",
+    "description": "Integración nativa con el Gestor de Autorizaciones Electrónicas (GAE) de la DGII "
+                   "para la emisión de Comprobantes Fiscales Electrónicos bajo la Ley 32-23.",
     "author": "Vicente Tiapa",
-    "category": "Localization/Dominican Republic",
+    "website": "https://gaedigital.com/facturacionelectronica/",
+    "category": "Accounting/Localizations/Account Charts",
     "license": "LGPL-3",
-    "version": "17.0.1.0.0",
+    "version": "17.0.1.1.0",
+    "support": "vicentetiapa95@gmail.com",
     "depends": ["account", "l10n_latam_invoice_document"],
     "data": [
         "security/ir.model.access.csv",

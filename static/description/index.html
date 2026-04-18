@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8"/>
+    <style>
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; color: #333; margin: 0; padding: 0; }
+        .hero { background: linear-gradient(135deg, #1a237e 0%, #283593 60%, #3949ab 100%); color: #fff; padding: 48px 40px; text-align: center; }
+        .hero img { height: 80px; margin-bottom: 20px; }
+        .hero h1 { font-size: 32px; margin: 0 0 12px; font-weight: 700; }
+        .hero p { font-size: 16px; margin: 0; opacity: 0.88; max-width: 620px; display: inline-block; }
+        .badge { display: inline-block; background: #ff6f00; color: #fff; border-radius: 4px; padding: 4px 12px; font-size: 12px; font-weight: 700; margin-top: 16px; letter-spacing: 1px; }
+        .section { padding: 40px; max-width: 900px; margin: 0 auto; }
+        .section h2 { font-size: 22px; color: #1a237e; border-bottom: 2px solid #e8eaf6; padding-bottom: 10px; margin-bottom: 24px; }
+        .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+        .feature-card { background: #f5f7ff; border-radius: 8px; padding: 24px; border-top: 3px solid #3949ab; }
+        .feature-card .icon { font-size: 28px; margin-bottom: 12px; }
+        .feature-card h3 { font-size: 15px; margin: 0 0 8px; color: #1a237e; }
+        .feature-card p { font-size: 13px; color: #555; margin: 0; line-height: 1.5; }
+        .ecf-types { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+        .ecf-tag { background: #e8eaf6; border-left: 4px solid #3949ab; padding: 12px 16px; border-radius: 4px; font-size: 13px; }
+        .ecf-tag strong { color: #1a237e; display: block; margin-bottom: 2px; }
+        .steps { counter-reset: step; }
+        .step { display: flex; gap: 16px; margin-bottom: 20px; align-items: flex-start; }
+        .step-num { background: #3949ab; color: #fff; border-radius: 50%; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; flex-shrink: 0; }
+        .step-text h4 { margin: 0 0 4px; font-size: 14px; color: #1a237e; }
+        .step-text p { margin: 0; font-size: 13px; color: #555; }
+        .prereqs { background: #fff8e1; border: 1px solid #ffe082; border-radius: 8px; padding: 20px 24px; }
+        .prereqs ul { margin: 8px 0 0; padding-left: 20px; }
+        .prereqs li { font-size: 13px; color: #555; margin-bottom: 6px; }
+        .gae-box { background: #e8eaf6; border-radius: 8px; padding: 24px; display: flex; gap: 24px; align-items: center; }
+        .gae-box img { height: 60px; }
+        .gae-box p { font-size: 13px; color: #555; margin: 4px 0 0; }
+        .gae-box a { color: #3949ab; font-weight: 600; }
+        footer { background: #1a237e; color: rgba(255,255,255,0.7); text-align: center; padding: 20px; font-size: 12px; }
+        footer a { color: #90caf9; }
+    </style>
+</head>
+<body>
+
+<!-- HERO -->
+<div class="hero">
+    <h1>Facturación Electrónica (e-CF) — GAE</h1>
+    <p>Integración nativa de Odoo 17 con el Gestor de Autorizaciones Electrónicas (GAE) de la DGII para la emisión de Comprobantes Fiscales Electrónicos en República Dominicana.</p>
+    <div class="badge">República Dominicana · Ley 32-23</div>
+</div>
+
+<!-- RESUMEN -->
+<div class="section">
+    <h2>¿Qué hace este módulo?</h2>
+    <div class="features">
+        <div class="feature-card">
+            <div class="icon">🧾</div>
+            <h3>Emisión de e-CF</h3>
+            <p>Envía facturas electrónicas directamente desde Odoo al GAE con un solo clic. Soporta E31 a E47.</p>
+        </div>
+        <div class="feature-card">
+            <div class="icon">🔐</div>
+            <h3>Timbre Digital</h3>
+            <p>Obtiene y almacena el código de seguridad, URL de consulta y fecha de firma devueltos por el GAE tras la aprobación.</p>
+        </div>
+        <div class="feature-card">
+            <div class="icon">📄</div>
+            <h3>QR en el PDF</h3>
+            <p>Agrega automáticamente el QR, código de seguridad y fecha de firma DGII al pie de las representaciones impresas.</p>
+        </div>
+        <div class="feature-card">
+            <div class="icon">🔄</div>
+            <h3>Procesamiento Asíncrono</h3>
+            <p>El GAE procesa en lote. El módulo gestiona los estados: Pendiente → Enviado → Aprobado / Rechazado.</p>
+        </div>
+        <div class="feature-card">
+            <div class="icon">💰</div>
+            <h3>Impuestos Adicionales</h3>
+            <p>Soporte completo para ISC, propina legal (10%) e Impuesto Telecomunicaciones (2%) via array <code>aditionalTaxes</code>.</p>
+        </div>
+        <div class="feature-card">
+            <div class="icon">⚙️</div>
+            <h3>Independiente</h3>
+            <p>Funciona con los módulos oficiales de Odoo (<code>account</code>, <code>l10n_latam_invoice_document</code>) sin dependencias privadas.</p>
+        </div>
+    </div>
+</div>
+
+<!-- TIPOS DE COMPROBANTE -->
+<div class="section" style="background:#f9f9ff; padding-top:40px; padding-bottom:40px; max-width:100%;">
+<div style="max-width:900px; margin:0 auto;">
+    <h2>Tipos de e-CF Soportados</h2>
+    <div class="ecf-types">
+        <div class="ecf-tag"><strong>E31 — Factura Crédito Fiscal</strong>Ventas a contribuyentes con RNC</div>
+        <div class="ecf-tag"><strong>E32 — Factura de Consumo</strong>Ventas a consumidor final</div>
+        <div class="ecf-tag"><strong>E33 — Nota de Débito</strong>Con código y razón de modificación</div>
+        <div class="ecf-tag"><strong>E34 — Nota de Crédito</strong>Vinculada al comprobante original</div>
+        <div class="ecf-tag"><strong>E41 — Comprobante de Compras</strong>Autocomprobante con retenciones ITBIS/ISR</div>
+        <div class="ecf-tag"><strong>E43 — Gasto Menor</strong>Sin datos de comprador</div>
+        <div class="ecf-tag"><strong>E44 — Régimen Especial</strong>Facturación bajo régimen especial</div>
+        <div class="ecf-tag"><strong>E45 — Gubernamental</strong>Entidades del Estado</div>
+        <div class="ecf-tag"><strong>E46 — Exportación</strong>ITBIS 0% en todas las líneas</div>
+        <div class="ecf-tag"><strong>E47 — Pago al Exterior</strong>Beneficiario en el exterior</div>
+    </div>
+</div>
+</div>
+
+<!-- FLUJO DE USO -->
+<div class="section">
+    <h2>Flujo de Uso</h2>
+    <div class="steps">
+        <div class="step">
+            <div class="step-num">1</div>
+            <div class="step-text">
+                <h4>Configura las credenciales GAE</h4>
+                <p>En Ajustes → Facturación Electrónica (eCF) ingresa tu API Key, URL del GAE y código de punto de venta.</p>
+            </div>
+        </div>
+        <div class="step">
+            <div class="step-num">2</div>
+            <div class="step-text">
+                <h4>Confirma la factura en Odoo</h4>
+                <p>Crea y confirma una factura con tipo de documento electrónico (E31, E32, etc.). El campo <em>Aplica e-CF</em> se activa automáticamente.</p>
+            </div>
+        </div>
+        <div class="step">
+            <div class="step-num">3</div>
+            <div class="step-text">
+                <h4>Envía al GAE</h4>
+                <p>Haz clic en <strong>Enviar a DGII (eCF)</strong>. El payload se construye y envía al endpoint <code>POST /api/Invoice</code> del GAE.</p>
+            </div>
+        </div>
+        <div class="step">
+            <div class="step-num">4</div>
+            <div class="step-text">
+                <h4>Verifica el estado</h4>
+                <p>El GAE procesa en lote. Usa <strong>Verificar Estado GAE</strong> para consultar si fue Aprobado o Rechazado.</p>
+            </div>
+        </div>
+        <div class="step">
+            <div class="step-num">5</div>
+            <div class="step-text">
+                <h4>Timbre en el PDF</h4>
+                <p>Al aprobarse, el código de seguridad y el QR DGII aparecen automáticamente en la representación impresa.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- PREREQUISITOS -->
+<div class="section">
+    <h2>Requisitos Previos</h2>
+    <div class="prereqs">
+        <strong>Antes de instalar este módulo necesitas:</strong>
+        <ul>
+            <li>RNC activo y vigente ante la DGII</li>
+            <li>Certificado de firma digital vigente</li>
+            <li>Certificación como emisor electrónico ante la DGII</li>
+            <li>Secuencias de e-CF autorizadas cargadas en el GAE</li>
+            <li>Credenciales (API Key) de una cuenta activa en <a href="https://gaedigital.com" target="_blank">GAE Digital</a></li>
+            <li>Python: <code>qrcode</code>, <code>requests</code> (se instalan con Odoo.sh automáticamente)</li>
+        </ul>
+    </div>
+</div>
+
+<!-- SOBRE GAE -->
+<div class="section">
+    <h2>Sobre GAE Digital</h2>
+    <div class="gae-box">
+        <div>
+            <strong style="font-size:15px; color:#1a237e;">GAE — Gestor de Autorizaciones Electrónicas</strong>
+            <p>Proveedor certificado de facturación electrónica en República Dominicana bajo la Ley 32-23. Ofrece integración vía API con tres endpoints y planes desde $9/mes con facturas ilimitadas y 30 días de prueba gratuita.</p>
+            <p style="margin-top:8px;"><a href="https://gaedigital.com/facturacionelectronica/" target="_blank">gaedigital.com →</a></p>
+        </div>
+    </div>
+</div>
+
+<footer>
+    Desarrollado por Vicente Tiapa &nbsp;·&nbsp; Licencia LGPL-3 &nbsp;·&nbsp;
+    <a href="https://gaedigital.com" target="_blank">GAE Digital</a>
+</footer>
+
+</body>
+</html>
