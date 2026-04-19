@@ -3,13 +3,23 @@
 import base64
 import io
 import logging
+from datetime import datetime
 
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError
 
-from .gae_service import GaeService
+from .gae_service import GaeService, GaeNetworkError
 
 _logger = logging.getLogger(__name__)
+
+# Etiquetas legibles para notificaciones al usuario
+_GAE_STATUS_LABELS = {
+    "pending": "Pendiente",
+    "sent": "Enviado (procesando)",
+    "approved": "Aprobado",
+    "rejected": "Rechazado",
+    "contingency": "Contingencia",
+}
 
 
 class AccountMove(models.Model):
@@ -53,11 +63,17 @@ class AccountMove(models.Model):
         copy=False,
         help="Fecha y hora en que el GAE firmó el comprobante.",
     )
-    gae_error_msg = fields.Char(
+    gae_error_msg = fields.Text(
         string="Error GAE",
         readonly=True,
         copy=False,
         help="Último mensaje de error recibido del GAE.",
+    )
+    gae_last_attempt_date = fields.Datetime(
+        string="Último Intento GAE",
+        readonly=True,
+        copy=False,
+        help="Fecha y hora del último intento de envío o consulta al GAE.",
     )
     l10n_do_ecf_modification_code = fields.Selection(
         selection=[
@@ -97,18 +113,7 @@ class AccountMove(models.Model):
         "move_type",
     )
     def _compute_is_ecf_applicable(self):
-        """
-        Un comprobante aplica e-CF cuando:
-        1. La empresa está habilitada como emisora de e-CF
-           (company.l10n_do_ecf_issuer = True).
-        2. El tipo de documento es electrónico, es decir su prefijo empieza por 'E'
-           seguido de dos dígitos (E31, E32, E33, E34, E41, E43, E44, E45, E46, E47).
-        3. El comprobante es del tipo movimiento de factura/reembolso (no entradas
-           de diario generales).
-        """
-        invoice_types = {
-            "out_invoice", "out_refund", "in_invoice", "in_refund"
-        }
+        invoice_types = {"out_invoice", "out_refund", "in_invoice", "in_refund"}
         for move in self:
             is_issuer = move.company_id.l10n_do_ecf_issuer
             doc_type = move.l10n_latam_document_type_id
@@ -122,6 +127,23 @@ class AccountMove(models.Model):
             move.is_ecf_applicable = bool(is_issuer and is_ecf_doc and is_invoice_type)
 
     # ------------------------------------------------------------------
+    # Utilidades internas
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_gae_date(raw_date):
+        """Parsea la fecha de firma devuelta por el GAE en distintos formatos."""
+        if not raw_date:
+            return False
+        for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f"):
+            try:
+                return datetime.strptime(raw_date[:26], fmt)
+            except ValueError:
+                continue
+        _logger.warning("GAE | No se pudo parsear fecha de firma: %s", raw_date)
+        return False
+
+    # ------------------------------------------------------------------
     # Acciones de botón
     # ------------------------------------------------------------------
 
@@ -129,77 +151,84 @@ class AccountMove(models.Model):
         """
         Envía el comprobante al GAE de la DGII.
         Actualiza los campos gae_* según la respuesta.
-        Puede ser llamado desde el botón "Enviar a DGII (eCF)".
         """
         self.ensure_one()
 
         if not self.is_ecf_applicable:
-            raise UserError(
-                _("Este comprobante no aplica para envío electrónico (e-CF).")
-            )
+            raise UserError(_("Este comprobante no aplica para envío electrónico (e-CF)."))
         if self.state != "posted":
-            raise UserError(
-                _("Solo se pueden enviar al GAE comprobantes confirmados (publicados).")
-            )
+            raise UserError(_("Solo se pueden enviar al GAE comprobantes confirmados (publicados)."))
         if not self.l10n_latam_document_number:
-            raise UserError(
-                _("El comprobante no tiene número de documento fiscal asignado.")
-            )
+            raise UserError(_("El comprobante no tiene número de documento fiscal asignado."))
 
         service = GaeService(self.company_id)
 
+        # Validación pre-vuelo: detecta problemas antes de llamar al GAE
+        service.validate_pre_flight(self)
+
+        # Registrar intento
+        self.write({"gae_last_attempt_date": fields.Datetime.now()})
+
         try:
             result = service.send_invoice(self)
+
+        except GaeNetworkError as e:
+            # Error de red: no cambiar el estado GAE (el comprobante puede o no haber llegado)
+            err_msg = str(e.args[0]) if e.args else "Error de conexión con el GAE"
+            _logger.warning(
+                "GAE | Error de red al enviar e-CF %s: %s",
+                self.l10n_latam_document_number, err_msg,
+            )
+            self.write({"gae_error_msg": err_msg})
+            raise UserError(
+                _("No se pudo conectar con el GAE para enviar el e-CF %s.\n\n%s\n\n"
+                  "El comprobante puede haber llegado al GAE igualmente. "
+                  "Use 'Verificar Estado GAE' para confirmarlo.")
+                % (self.l10n_latam_document_number, err_msg)
+            )
+
         except UserError as e:
-            # Guardamos el error para que quede visible en la vista
+            # Rechazo o error de validación: marcar como rechazado
+            err_msg = str(e.args[0]) if e.args else "Error desconocido"
             self.write({
                 "gae_status": "rejected",
-                "gae_error_msg": str(e.args[0])[:512] if e.args else "Error desconocido",
+                "gae_error_msg": err_msg,
             })
             raise
 
         except Exception as e:
             _logger.exception(
-                "GAE | Error inesperado al enviar e-CF %s",
-                self.l10n_latam_document_number,
+                "GAE | Error inesperado al enviar e-CF %s", self.l10n_latam_document_number
             )
+            err_msg = str(e)
             self.write({
                 "gae_status": "rejected",
-                "gae_error_msg": str(e)[:512],
+                "gae_error_msg": err_msg,
             })
             raise UserError(
-                _("Error inesperado al enviar el comprobante al GAE: %s") % str(e)
+                _("Error inesperado al enviar el comprobante al GAE: %s") % err_msg
             )
 
-        # Parsear fecha de firma
-        sign_date = False
-        raw_date = result.get("date", "")
-        if raw_date:
-            try:
-                from datetime import datetime
-                # El GAE puede devolver distintos formatos; intentamos los más comunes
-                for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f"):
-                    try:
-                        sign_date = datetime.strptime(raw_date[:26], fmt)
-                        break
-                    except ValueError:
-                        continue
-            except Exception:
-                _logger.warning("GAE | No se pudo parsear la fecha de firma: %s", raw_date)
+        sign_date = self._parse_gae_date(result.get("date", ""))
 
         self.write({
             "gae_status": "sent",
+            "gae_sign_date": sign_date or False,
             "gae_error_msg": False,
         })
+
+        _logger.info(
+            "GAE | e-CF %s enviado correctamente — estado: sent", self.l10n_latam_document_number
+        )
 
         return {
             "type": "ir.actions.client",
             "tag": "display_notification",
             "params": {
-                "title": _("e-CF Enviado"),
+                "title": _("e-CF Enviado al GAE"),
                 "message": _(
-                    "El comprobante %s fue enviado al GAE. "
-                    "GAE procesa en lote — use 'Verificar Estado GAE' para obtener el resultado."
+                    "El comprobante %s fue enviado al GAE correctamente. "
+                    "GAE procesa en lote — use 'Verificar Estado GAE' para obtener el resultado final."
                 ) % self.l10n_latam_document_number,
                 "type": "success",
                 "sticky": False,
@@ -222,23 +251,30 @@ class AccountMove(models.Model):
         self.ensure_one()
 
         if not self.is_ecf_applicable:
-            raise UserError(
-                _("Este comprobante no aplica para consulta de estado e-CF.")
-            )
+            raise UserError(_("Este comprobante no aplica para consulta de estado e-CF."))
         if not self.l10n_latam_document_number:
-            raise UserError(
-                _("El comprobante no tiene número de documento fiscal asignado.")
-            )
+            raise UserError(_("El comprobante no tiene número de documento fiscal asignado."))
 
         service = GaeService(self.company_id)
         rnc = self.company_id.vat or ""
         ecf = self.l10n_latam_document_number
 
+        # Registrar intento
+        self.write({"gae_last_attempt_date": fields.Datetime.now()})
+
         # 1. Consultar estado de procesamiento batch (GetInvoiceStatus)
         try:
             status_data = service.get_invoice_status(rnc, ecf)
+        except GaeNetworkError as e:
+            err_msg = str(e.args[0]) if e.args else "Error de conexión"
+            self.write({"gae_error_msg": err_msg})
+            raise UserError(
+                _("No se pudo conectar con el GAE para consultar el estado del e-CF %s.\n\n%s")
+                % (ecf, err_msg)
+            )
         except UserError as e:
-            self.write({"gae_error_msg": str(e.args[0])[:512] if e.args else "Error"})
+            err_msg = str(e.args[0]) if e.args else "Error"
+            self.write({"gae_error_msg": err_msg})
             raise
         except Exception as e:
             _logger.exception("GAE | Error inesperado al consultar estado de e-CF %s", ecf)
@@ -268,15 +304,30 @@ class AccountMove(models.Model):
             "pendiente": "pending",
             "pending": "pending",
         }
-        new_status = status_map.get(gae_state_raw, self.gae_status)
+        new_status = status_map.get(gae_state_raw)
+        if new_status is None:
+            # Estado desconocido: conservar el actual y loguear para investigación
+            _logger.warning(
+                "GAE | Estado desconocido '%s' para e-CF %s — se conserva estado actual '%s'",
+                gae_state_raw, ecf, self.gae_status,
+            )
+            new_status = self.gae_status
+
         write_vals = {"gae_status": new_status, "gae_error_msg": False}
 
         # Si fue rechazado, capturar detalle del error desde 'details'
         if new_status == "rejected":
             details = status_data.get("details") or []
             if details and isinstance(details, list):
-                error_msgs = [str(d.get("description") or d.get("message") or d) for d in details]
-                write_vals["gae_error_msg"] = "; ".join(error_msgs)[:512]
+                error_msgs = []
+                for d in details:
+                    if isinstance(d, dict):
+                        code = d.get("code") or d.get("Code") or ""
+                        desc = d.get("description") or d.get("message") or d.get("Description") or str(d)
+                        error_msgs.append("[{}] {}".format(code, desc) if code else str(desc))
+                    else:
+                        error_msgs.append(str(d))
+                write_vals["gae_error_msg"] = "\n".join(error_msgs)
 
         # 2. Si fue aprobado, obtener timbre (GetInvoiceInfo → code, url, date)
         if new_status == "approved":
@@ -286,31 +337,37 @@ class AccountMove(models.Model):
                     write_vals["gae_security_code"] = info["code"]
                 if info.get("url"):
                     write_vals["gae_sign_url"] = info["url"]
-                raw_date = info.get("date", "")
-                if raw_date:
-                    from datetime import datetime
-                    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f"):
-                        try:
-                            write_vals["gae_sign_date"] = datetime.strptime(raw_date[:26], fmt)
-                            break
-                        except ValueError:
-                            continue
+                sign_date = self._parse_gae_date(info.get("date", ""))
+                if sign_date:
+                    write_vals["gae_sign_date"] = sign_date
             except Exception:
                 _logger.warning(
-                    "GAE | No se pudo obtener timbre del e-CF %s aprobado", ecf
+                    "GAE | No se pudo obtener timbre del e-CF %s aprobado — "
+                    "use 'Verificar Estado GAE' nuevamente para reintentarlo.",
+                    ecf,
                 )
 
         self.write(write_vals)
+
+        _logger.info(
+            "GAE | Estado consultado para e-CF %s: %s → %s",
+            ecf, gae_state_raw, new_status,
+        )
+
+        status_label = _GAE_STATUS_LABELS.get(new_status, new_status.upper())
+        notif_type = "success" if new_status == "approved" else (
+            "danger" if new_status == "rejected" else "info"
+        )
 
         return {
             "type": "ir.actions.client",
             "tag": "display_notification",
             "params": {
-                "title": _("Estado GAE"),
+                "title": _("Estado GAE: %s") % status_label,
                 "message": _(
-                    "Estado del e-CF %s en el GAE: %s"
-                ) % (ecf, new_status.upper()),
-                "type": "info" if new_status != "rejected" else "danger",
+                    "El e-CF %s tiene estado '%s' en el GAE."
+                ) % (ecf, status_label),
+                "type": notif_type,
                 "sticky": new_status == "rejected",
                 "next": {
                     "type": "ir.actions.act_window",
@@ -344,7 +401,6 @@ class AccountMove(models.Model):
             return "data:image/png;base64," + b64
         except Exception:
             _logger.warning(
-                "GAE | No se pudo generar QR para %s",
-                self.l10n_latam_document_number,
+                "GAE | No se pudo generar QR para %s", self.l10n_latam_document_number
             )
             return ""

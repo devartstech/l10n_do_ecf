@@ -31,7 +31,7 @@
                     invisible="not is_ecf_applicable or state != 'posted' or gae_status not in ('pending', 'rejected')"
                 />
 
-                <!-- Botón "Verificar Estado": visible solo cuando el estado es 'sent' -->
+                <!-- Botón "Verificar Estado": visible cuando hay un intento previo -->
                 <button
                     name="action_check_gae_status"
                     type="object"
@@ -42,12 +42,12 @@
                 />
             </xpath>
 
-            <!-- Badge de estado GAE en la barra de estado superior -->
+            <!-- Barra de progreso del estado GAE en el header -->
             <xpath expr="//header" position="inside">
                 <field
                     name="gae_status"
                     widget="statusbar"
-                    statusbar_visible="pending,sent,approved,rejected"
+                    statusbar_visible="pending,sent,approved,rejected,contingency"
                     invisible="not is_ecf_applicable"
                     options="{'clickable': '0'}"
                 />
@@ -72,6 +72,7 @@
                             />
                             <field name="gae_sign_date"/>
                             <field name="gae_security_code"/>
+                            <field name="gae_last_attempt_date"/>
                         </group>
                         <group>
                             <field
@@ -82,7 +83,7 @@
                             <field
                                 name="gae_error_msg"
                                 invisible="not gae_error_msg"
-                                style="color: var(--danger);"
+                                style="color: var(--danger); white-space: pre-wrap;"
                             />
                         </group>
                     </group>

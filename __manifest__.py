@@ -9,7 +9,7 @@
     "website": "https://gaedigital.com/facturacionelectronica/",
     "category": "Accounting/Localizations/Account Charts",
     "license": "LGPL-3",
-    "version": "17.0.1.1.0",
+    "version": "17.0.1.2.0",
     "support": "vicentetiapa95@gmail.com",
     "depends": ["account", "l10n_latam_invoice_document"],
     "data": [

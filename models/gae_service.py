@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 
 import logging
+import time
+from datetime import datetime
+
 import requests
 
 from odoo.exceptions import UserError
@@ -38,7 +41,17 @@ ITBIS_TAX_TYPE_MAP = {
     0: 3,    # ITBIS 0% exento
 }
 
-REQUEST_TIMEOUT = 30  # segundos
+REQUEST_TIMEOUT = 60  # segundos
+_GAE_MAX_RETRIES = 3
+_GAE_RETRY_BACKOFF = 2  # segundos base; intento N espera N*backoff
+
+
+class GaeNetworkError(UserError):
+    """
+    Error de comunicación con el GAE (timeout, conexión rechazada, etc.).
+    Distinto de un rechazo DGII — indica que el e-CF puede aún no haber llegado.
+    """
+    pass
 
 
 class GaeService:
@@ -48,9 +61,6 @@ class GaeService:
     """
 
     def __init__(self, company):
-        """
-        :param company: recordset de res.company con los campos GAE configurados.
-        """
         self.company = company
         self._validate_company_config()
 
@@ -75,9 +85,103 @@ class GaeService:
             "ApiKey": self.company.gae_api_key,
         }
 
+    def _make_request(self, method, url, **kwargs):
+        """
+        Realiza una petición HTTP con reintentos automáticos ante errores de red.
+        Reintenta hasta _GAE_MAX_RETRIES veces con backoff en Timeout y ConnectionError.
+        """
+        kwargs.setdefault("timeout", REQUEST_TIMEOUT)
+        last_exc = None
+
+        for attempt in range(1, _GAE_MAX_RETRIES + 1):
+            _logger.debug(
+                "GAE | %s %s (intento %d/%d)", method.upper(), url, attempt, _GAE_MAX_RETRIES
+            )
+            t_start = datetime.now()
+            try:
+                response = requests.request(method, url, **kwargs)
+                elapsed = (datetime.now() - t_start).total_seconds()
+                _logger.debug(
+                    "GAE | HTTP %s en %.2fs — %s %s",
+                    response.status_code, elapsed, method.upper(), url,
+                )
+                return response
+
+            except requests.exceptions.Timeout as exc:
+                last_exc = exc
+                _logger.warning(
+                    "GAE | Timeout en intento %d/%d — URL: %s", attempt, _GAE_MAX_RETRIES, url
+                )
+            except requests.exceptions.ConnectionError as exc:
+                last_exc = exc
+                _logger.warning(
+                    "GAE | Error de conexión en intento %d/%d — %s",
+                    attempt, _GAE_MAX_RETRIES, str(exc)[:120],
+                )
+            except requests.exceptions.RequestException as exc:
+                raise GaeNetworkError(
+                    _("Error inesperado al comunicarse con el GAE: %s") % str(exc)
+                )
+
+            if attempt < _GAE_MAX_RETRIES:
+                wait = attempt * _GAE_RETRY_BACKOFF
+                _logger.info("GAE | Reintentando en %ds…", wait)
+                time.sleep(wait)
+
+        raise GaeNetworkError(
+            _("No se pudo conectar con el GAE después de %d intentos (timeout %ss). "
+              "Verifique la conexión e intente nuevamente más tarde.")
+            % (_GAE_MAX_RETRIES, REQUEST_TIMEOUT)
+        )
+
     # ------------------------------------------------------------------
     # Métodos públicos
     # ------------------------------------------------------------------
+
+    def validate_pre_flight(self, invoice):
+        """
+        Valida los datos mínimos del comprobante antes de construir el payload.
+        Lanza UserError con lista de problemas encontrados.
+        """
+        errors = []
+
+        if not invoice.company_id.vat:
+            errors.append(
+                _("La empresa '%s' no tiene RNC/NIT configurado.") % invoice.company_id.name
+            )
+
+        if not invoice.invoice_date:
+            errors.append(_("La factura no tiene fecha de emisión asignada."))
+
+        product_lines = invoice.invoice_line_ids.filtered(
+            lambda l: l.display_type not in ("line_section", "line_note")
+        )
+        if not product_lines:
+            errors.append(_("La factura no tiene líneas de artículos o servicios."))
+
+        ecf_type = None
+        try:
+            ecf_type = self._get_ecf_type(invoice)
+        except UserError as exc:
+            errors.append(str(exc.args[0]) if exc.args else str(exc))
+
+        if ecf_type and ecf_type in ECF_TYPES_WITH_MOD_NCF:
+            mod_code = getattr(invoice, "l10n_do_ecf_modification_code", None)
+            if not mod_code:
+                errors.append(
+                    _("Las notas de crédito/débito electrónicas requieren seleccionar "
+                      "la Razón de Modificación en la pestaña 'Información e-CF'.")
+                )
+            if not self._get_original_invoice(invoice):
+                errors.append(
+                    _("No se encontró la factura original referenciada por esta nota de crédito/débito.")
+                )
+
+        if errors:
+            raise UserError(
+                _("No se puede enviar al GAE. Corrija los siguientes problemas:\n\n%s")
+                % "\n".join("• " + e for e in errors)
+            )
 
     def send_invoice(self, invoice):
         """
@@ -85,51 +189,38 @@ class GaeService:
 
         :param invoice: recordset de account.move.
         :return: dict con claves 'code', 'url', 'date' si la operación fue exitosa.
-        :raises UserError: si hay errores de negocio o de comunicación con el GAE.
+        :raises GaeNetworkError: si hay problemas de conectividad.
+        :raises UserError: si el GAE rechaza el comprobante o hay error de validación.
         """
         payload = self._build_payload(invoice)
         url = "{}/Invoice".format(self.company.gae_api_url.rstrip("/"))
 
         _logger.info(
-            "GAE | Enviando e-CF %s al GAE. URL: %s | Payload: %s",
+            "GAE | Enviando e-CF %s (id=%s) — tipo: %s, empresa: %s",
             invoice.l10n_latam_document_number,
-            url,
-            payload,
+            invoice.id,
+            payload.get("ecfType"),
+            invoice.company_id.name,
         )
+        _logger.debug("GAE | Payload e-CF %s: %s", invoice.l10n_latam_document_number, payload)
 
-        try:
-            response = requests.post(
-                url,
-                json=payload,
-                headers=self._get_headers(),
-                timeout=REQUEST_TIMEOUT,
-            )
-        except requests.exceptions.Timeout:
-            raise UserError(
-                _("Tiempo de espera agotado al conectar con el GAE (timeout %ss). "
-                  "Intente nuevamente o contacte al administrador.")
-                % REQUEST_TIMEOUT
-            )
-        except requests.exceptions.ConnectionError as e:
-            raise UserError(
-                _("No se pudo conectar con el GAE: %s") % str(e)
-            )
-        except requests.exceptions.RequestException as e:
-            raise UserError(
-                _("Error inesperado al comunicarse con el GAE: %s") % str(e)
-            )
+        response = self._make_request("post", url, json=payload, headers=self._get_headers())
 
         _logger.info(
-            "GAE | Respuesta HTTP %s para e-CF %s: %s",
+            "GAE | Respuesta HTTP %s para e-CF %s",
             response.status_code,
             invoice.l10n_latam_document_number,
-            response.text,
+        )
+        _logger.debug(
+            "GAE | Cuerpo respuesta e-CF %s: %s",
+            invoice.l10n_latam_document_number,
+            response.text[:2000],
         )
 
         if response.status_code not in (200, 201):
             error_text = self._extract_error_message(response)
             raise UserError(
-                _("El GAE rechazó el comprobante %s (HTTP %s): %s")
+                _("El GAE rechazó el comprobante %s (HTTP %s):\n%s")
                 % (invoice.l10n_latam_document_number, response.status_code, error_text)
             )
 
@@ -137,13 +228,21 @@ class GaeService:
             data = response.json()
         except ValueError:
             raise UserError(
-                _("La respuesta del GAE no es JSON válido: %s") % response.text
+                _("La respuesta del GAE no es JSON válido para el e-CF %s.")
+                % invoice.l10n_latam_document_number
             )
 
         invoice_response = data.get("invoiceResponses", {})
         if not invoice_response:
+            _logger.warning(
+                "GAE | Respuesta sin 'invoiceResponses' para e-CF %s: %s",
+                invoice.l10n_latam_document_number,
+                str(data)[:500],
+            )
             raise UserError(
-                _("El GAE devolvió una respuesta sin 'invoiceResponses': %s") % data
+                _("El GAE devolvió una respuesta inesperada para el e-CF %s. "
+                  "Consulte los logs del servidor para más detalles.")
+                % invoice.l10n_latam_document_number
             )
 
         return {
@@ -159,42 +258,30 @@ class GaeService:
         :param rnc: RNC del emisor.
         :param ecf: Número de comprobante electrónico (ej: E310000050001).
         :return: dict con la respuesta del GAE.
-        :raises UserError: en caso de error de comunicación.
+        :raises GaeNetworkError: en caso de error de comunicación.
+        :raises UserError: en caso de respuesta inválida.
         """
-        url = "{}/Invoice/GetInvoiceStatus".format(
-            self.company.gae_api_url.rstrip("/")
-        )
+        url = "{}/Invoice/GetInvoiceStatus".format(self.company.gae_api_url.rstrip("/"))
         params = {"rnc": rnc, "ecf": ecf}
 
         _logger.info("GAE | Consultando estado de e-CF %s (RNC: %s)", ecf, rnc)
 
-        try:
-            response = requests.get(
-                url,
-                params=params,
-                headers=self._get_headers(),
-                timeout=REQUEST_TIMEOUT,
-            )
-        except requests.exceptions.Timeout:
-            raise UserError(
-                _("Tiempo de espera agotado al consultar el estado en el GAE.")
-            )
-        except requests.exceptions.RequestException as e:
-            raise UserError(
-                _("Error al consultar estado en el GAE: %s") % str(e)
-            )
+        response = self._make_request("get", url, params=params, headers=self._get_headers())
 
         if response.status_code != 200:
+            error_text = self._extract_error_message(response)
             raise UserError(
-                _("El GAE devolvió HTTP %s al consultar el estado del e-CF %s.")
-                % (response.status_code, ecf)
+                _("El GAE devolvió HTTP %s al consultar el estado del e-CF %s:\n%s")
+                % (response.status_code, ecf, error_text)
             )
 
         try:
-            return response.json()
+            data = response.json()
+            _logger.debug("GAE | Estado e-CF %s: %s", ecf, data)
+            return data
         except ValueError:
             raise UserError(
-                _("Respuesta inválida del GAE al consultar estado: %s") % response.text
+                _("Respuesta inválida del GAE al consultar estado del e-CF %s.") % ecf
             )
 
     def get_invoice_info(self, rnc, ecf):
@@ -205,40 +292,25 @@ class GaeService:
         Endpoint: GET /api/Invoice/GetInvoiceInfo
         Retorna invoiceResponses { date, code, url }.
         """
-        url = "{}/Invoice/GetInvoiceInfo".format(
-            self.company.gae_api_url.rstrip("/")
-        )
+        url = "{}/Invoice/GetInvoiceInfo".format(self.company.gae_api_url.rstrip("/"))
         params = {"rnc": rnc, "ecf": ecf}
 
         _logger.info("GAE | Consultando timbre de e-CF %s (RNC: %s)", ecf, rnc)
 
-        try:
-            response = requests.get(
-                url,
-                params=params,
-                headers=self._get_headers(),
-                timeout=REQUEST_TIMEOUT,
-            )
-        except requests.exceptions.Timeout:
-            raise UserError(
-                _("Tiempo de espera agotado al obtener timbre del GAE.")
-            )
-        except requests.exceptions.RequestException as e:
-            raise UserError(
-                _("Error al obtener timbre del GAE: %s") % str(e)
-            )
+        response = self._make_request("get", url, params=params, headers=self._get_headers())
 
         if response.status_code != 200:
+            error_text = self._extract_error_message(response)
             raise UserError(
-                _("El GAE devolvió HTTP %s al consultar timbre del e-CF %s.")
-                % (response.status_code, ecf)
+                _("El GAE devolvió HTTP %s al consultar timbre del e-CF %s:\n%s")
+                % (response.status_code, ecf, error_text)
             )
 
         try:
             data = response.json()
         except ValueError:
             raise UserError(
-                _("Respuesta inválida del GAE al consultar timbre: %s") % response.text
+                _("Respuesta inválida del GAE al consultar timbre del e-CF %s.") % ecf
             )
 
         invoice_responses = data.get("invoiceResponses") or {}
@@ -284,8 +356,6 @@ class GaeService:
         # Tasa de cambio: si la moneda es DOP se envía 1.0
         exchange_rate = 1.0
         if currency_name != "DOP" and invoice.currency_id:
-            # Odoo almacena la tasa inversa en currency_id.rate; calculamos
-            # cuántos DOP equivalen a 1 unidad de la moneda de la factura.
             try:
                 dop = invoice.env.ref("base.DOP")
                 rate = invoice.currency_id._get_conversion_rate(
@@ -296,6 +366,10 @@ class GaeService:
                 )
                 exchange_rate = round(rate, 4)
             except Exception:
+                _logger.warning(
+                    "GAE | No se pudo calcular tasa %s→DOP para e-CF %s, usando 1.0",
+                    currency_name, ecf_number,
+                )
                 exchange_rate = 1.0
 
         # E46 y E47: taxedAmountInd debe ser null
@@ -309,8 +383,7 @@ class GaeService:
         total_retenciones = self._compute_total_retenciones(invoice, ecf_type)
         invoice_total = round(invoice.amount_untaxed + total_itbis + total_additional - total_retenciones, 2)
 
-        # E43 (Gasto Menor): TotalTaxedAmount = monto total (no hay ITBIS pero se
-        # reporta el total gravable para efectos del registro fiscal)
+        # E43 (Gasto Menor): TotalTaxedAmount = monto total
         if ecf_type == "43":
             total_taxed = invoice_total
         else:
@@ -365,7 +438,6 @@ class GaeService:
         if ecf_type == "43":
             pass
         elif ecf_type == "47":
-            # Identificador del beneficiario en el exterior (opcional)
             foreign_dni = invoice.partner_id.vat or ""
             if foreign_dni:
                 payload["foreignDni"] = foreign_dni
@@ -390,13 +462,10 @@ class GaeService:
             original_invoice = self._get_original_invoice(invoice)
             if original_invoice:
                 payload["modifiedNcf"] = original_invoice.l10n_latam_document_number or ""
-                # rncNcfModified: RNC del emisor de la factura original
                 payload["rncNcfModified"] = original_invoice.company_id.vat or seller_rnc
-                # modifDateNcf: fecha de la factura ORIGINAL — formato DD-MM-AAAA según DGII
                 orig_date = original_invoice.invoice_date or original_invoice.date
                 if orig_date:
                     payload["modifDateNcf"] = orig_date.strftime("%d-%m-%Y")
-            # Código y descripción de razón de modificación
             mod_code = getattr(invoice, "l10n_do_ecf_modification_code", None)
             if mod_code:
                 try:
@@ -420,16 +489,13 @@ class GaeService:
         items = []
         line_number = 1
 
-        # Solo líneas de producto (excluir secciones, notas y líneas de impuesto)
         product_lines = invoice.invoice_line_ids.filtered(
             lambda l: l.display_type not in ("line_section", "line_note")
         )
 
         for line in product_lines:
             tax_type = self._get_itbis_type(line, ecf_type)
-            unit_price = round(line.price_unit * (1 - (line.discount or 0) / 100), 4)
             quantity = round(line.quantity, 4)
-            # itemAmount = base sin impuestos (unitPrice × quantity)
             item_amount = round(line.price_subtotal, 2)
             discount_amount = round(
                 line.price_unit * line.quantity - line.price_subtotal, 2
@@ -458,12 +524,8 @@ class GaeService:
             # Retenciones: solo para E41 y E47
             if ecf_type in ECF_TYPES_WITH_RETENTION:
                 item["retentionAgentInd"] = 1
-                item["itbisRetAmount"] = round(
-                    self._compute_itbis_retention(line), 2
-                )
-                item["isrRetAmount"] = round(
-                    self._compute_isr_retention(line), 2
-                )
+                item["itbisRetAmount"] = round(self._compute_itbis_retention(line), 2)
+                item["isrRetAmount"] = round(self._compute_isr_retention(line), 2)
 
             items.append(item)
             line_number += 1
@@ -475,21 +537,12 @@ class GaeService:
     # ------------------------------------------------------------------
 
     def _get_ecf_type(self, invoice):
-        """
-        Determina el código de tipo ECF ("31", "32", etc.) a partir del
-        tipo de documento fiscal de la factura.
-
-        :param invoice: recordset de account.move.
-        :return: str con el código ECF de dos dígitos.
-        :raises UserError: si el tipo de documento no es un e-CF conocido.
-        """
         doc_type = invoice.l10n_latam_document_type_id
         if not doc_type:
             raise UserError(
                 _("La factura %s no tiene tipo de documento fiscal asignado.")
                 % (invoice.name or invoice.id)
             )
-
         prefix = (doc_type.doc_code_prefix or "").upper().strip()
         ecf_code = ECF_TYPE_MAP.get(prefix)
         if not ecf_code:
@@ -501,30 +554,10 @@ class GaeService:
         return ecf_code
 
     def _get_itbis_type(self, line, ecf_type=None):
-        """
-        Mapea los impuestos de una línea de factura al código taxTypes del GAE.
-
-        Lógica:
-        - E46 (Exportación) → siempre taxTypes=3
-        - E43 (Gasto Menor) → siempre taxTypes=4
-        - Línea sin impuestos → taxTypes=0
-        - ITBIS 18% → taxTypes=1
-        - ITBIS 16% → taxTypes=2
-        - ITBIS 0% / Exento con tasa 0 → taxTypes=3
-        - Exento / No gravado → taxTypes=4
-
-        :param line: recordset de account.move.line.
-        :param ecf_type: str código ECF (opcional, para reglas especiales).
-        :return: int taxTypes.
-        """
-        # E46 solo ITBIS 3 (0% exportación); E43 y E47 solo Exento (4)
         if ecf_type == "46":
             return 3
         if ecf_type in ("43", "47"):
             return 4
-
-        # E44 (Regímenes Especiales): solo ITBIS no facturable (4) o ITBIS 0% (3)
-        # La DGII no admite taxCategory 1 ni 2 para este tipo de comprobante.
         if ecf_type == "44":
             if line.tax_ids:
                 for tax in line.tax_ids:
@@ -533,10 +566,8 @@ class GaeService:
                         if "0%" in name_lower or "itbis 0" in name_lower:
                             return 3
             return 4
-
         if not line.tax_ids:
             return 0
-
         for tax in line.tax_ids:
             amount = abs(tax.amount)
             if tax.amount_type == "percent":
@@ -545,49 +576,26 @@ class GaeService:
                 elif amount == 16:
                     return 2
                 elif amount == 0:
-                    # Distinguir entre exento 0% (taxTypes=3) y exento sin base (taxTypes=4)
                     tax_name_lower = (tax.name or "").lower()
                     if "0%" in tax_name_lower or "itbis 0" in tax_name_lower:
                         return 3
                     return 4
-            # Impuesto de monto fijo u otro tipo
             if amount == 0:
                 return 4
-
-        # Si tiene impuestos pero ninguno es ITBIS reconocido, marcar exento
         return 4
 
     def _get_payment_condition(self, invoice):
-        """
-        Determina si la factura es a contado ("1") o a crédito ("2").
-
-        :param invoice: recordset de account.move.
-        :return: str "1" o "2".
-        """
         if invoice.invoice_payment_term_id:
-            # "Immediate Payment" o términos sin días → contado
             lines = invoice.invoice_payment_term_id.line_ids
-            has_days = any(
-                (line.nb_days or 0) > 0 for line in lines
-            )
+            has_days = any((line.nb_days or 0) > 0 for line in lines)
             return "2" if has_days else "1"
-        # Sin término de pago: si la fecha de vencimiento es igual a la de emisión → contado
         if invoice.invoice_date and invoice.invoice_date_due:
             return "2" if invoice.invoice_date_due > invoice.invoice_date else "1"
         return "1"
 
     def _get_sequence_exp_date(self, invoice):
-        """
-        Obtiene la fecha de vencimiento de la secuencia fiscal del comprobante.
-        Usa l10n_do_fiscal_sequence_id (de l10n_do_accounting) si está disponible,
-        con fallback al campo propio l10n_do_ecf_sequence_exp_date.
-
-        :param invoice: recordset de account.move.
-        :return: str con fecha en formato ISO o None.
-        """
         fiscal_seq = getattr(invoice, "l10n_do_fiscal_sequence_id", None)
         if fiscal_seq and getattr(fiscal_seq, "expiration_date", None):
-            # sequenceExpDate: formato YYYY-MM-DD según DGII spec
             return fiscal_seq.expiration_date.strftime("%Y-%m-%d")
         exp_date = getattr(invoice, "l10n_do_ecf_sequence_exp_date", None)
         if exp_date:
@@ -595,12 +603,6 @@ class GaeService:
         return None
 
     def _get_partner_address(self, partner):
-        """
-        Construye una cadena de dirección legible para el comprador.
-
-        :param partner: recordset de res.partner.
-        :return: str con la dirección.
-        """
         parts = filter(None, [
             partner.street,
             partner.street2,
@@ -611,44 +613,21 @@ class GaeService:
         return ", ".join(parts)
 
     def _get_original_invoice(self, invoice):
-        """
-        Obtiene la factura original referenciada por una nota de crédito o débito.
-
-        :param invoice: recordset de account.move.
-        :return: recordset de account.move o None.
-        """
-        # Nota de crédito: Odoo vincula la original en reversed_entry_id
         if hasattr(invoice, "reversed_entry_id") and invoice.reversed_entry_id:
             return invoice.reversed_entry_id
-        # Nota de débito: puede estar en debit_origin_id (módulo account_debit_note)
         if hasattr(invoice, "debit_origin_id") and invoice.debit_origin_id:
             return invoice.debit_origin_id
         return None
 
     def _get_service_indicator(self, line):
-        """
-        Determina si la línea corresponde a un bien (1) o servicio (2).
-        Según DGII: 1=Bien, 2=Servicio.
-
-        :param line: recordset de account.move.line.
-        :return: str "1" (bien) o "2" (servicio).
-        """
         product = line.product_id
         if not product:
-            return "2"  # Sin producto → servicio por defecto
+            return "2"
         if product.type == "service":
             return "2"
         return "1"
 
     def _get_unit_measure(self, line):
-        """
-        Mapea la unidad de medida de Odoo al código GAE.
-        Si no hay mapeo, usa "43" (Unidad).
-
-        :param line: recordset de account.move.line.
-        :return: str código de unidad de medida GAE.
-        """
-        # Mapeo de nombres comunes de UoM de Odoo a códigos GAE
         UOM_MAP = {
             "unidad": "43", "unit": "43", "units": "43", "und": "43",
             "kg": "21", "kilogram": "21", "kilogramo": "21",
@@ -658,7 +637,7 @@ class GaeService:
             "lb": "23", "pound": "23", "libra": "23",
             "caja": "6", "box": "6",
             "dozen": "13", "docena": "13",
-            "hour": "43", "hora": "43",  # Servicios por hora → Unidad
+            "hour": "43", "hora": "43",
         }
         if line.product_uom_id:
             uom_name = (line.product_uom_id.name or "").lower().strip()
@@ -668,13 +647,6 @@ class GaeService:
         return "43"
 
     def _compute_total_itbis(self, invoice):
-        """
-        Calcula el ITBIS total de la factura excluyendo retenciones.
-        Solo suma impuestos con amount positivo y tipo ITBIS (16% o 18%).
-
-        :param invoice: recordset de account.move.
-        :return: float monto total de ITBIS.
-        """
         total = 0.0
         for line in invoice.line_ids.filtered(lambda l: l.tax_line_id):
             tax = line.tax_line_id
@@ -683,13 +655,6 @@ class GaeService:
         return total
 
     def _compute_total_retenciones(self, invoice, ecf_type):
-        """
-        Calcula el total de retenciones (ISR + ITBIS retenido) solo para E41/E47.
-
-        :param invoice: recordset de account.move.
-        :param ecf_type: str código ECF.
-        :return: float monto total de retenciones.
-        """
         if ecf_type not in ECF_TYPES_WITH_RETENTION:
             return 0.0
         total = 0.0
@@ -700,13 +665,6 @@ class GaeService:
         return total
 
     def _compute_itbis_retention(self, line):
-        """
-        Calcula el monto de retención de ITBIS para una línea (E41/E47).
-        Se aplica el 100% del ITBIS calculado como retención.
-
-        :param line: recordset de account.move.line.
-        :return: float monto de retención ITBIS.
-        """
         itbis_amount = 0.0
         for tax in line.tax_ids.filtered(
             lambda t: t.amount_type == "percent" and abs(t.amount) in (16, 18)
@@ -715,61 +673,30 @@ class GaeService:
         return itbis_amount
 
     def _compute_isr_retention(self, line):
-        """
-        Calcula el monto de retención ISR para una línea (E41/E47).
-        Busca impuestos de tipo ISR en la línea.
-
-        :param line: recordset de account.move.line.
-        :return: float monto de retención ISR.
-        """
         isr_amount = 0.0
         for tax in line.tax_ids.filtered(
             lambda t: t.amount_type == "percent"
-            and any(
-                kw in (t.name or "").lower()
-                for kw in ("isr", "renta", "retención isr", "ret. isr")
-            )
+            and any(kw in (t.name or "").lower() for kw in ("isr", "renta", "retención isr", "ret. isr"))
         ):
             isr_amount += line.price_subtotal * (abs(tax.amount) / 100)
         return isr_amount
 
     def _get_additional_taxes(self, line):
-        """
-        Construye el array aditionalTaxes para una línea de factura.
-        Solo incluye impuestos que tienen l10n_do_gae_additional_tax_type configurado
-        (ISC, propina legal, telecom, etc.). No incluye ITBIS ni retenciones.
-
-        :param line: recordset de account.move.line.
-        :return: list de dicts [{type, rate, amount}] o None.
-        """
         additional = []
         for tax in line.tax_ids:
             gae_type = getattr(tax, "l10n_do_gae_additional_tax_type", None)
             if not gae_type:
                 continue
-            # Excluir ITBIS (16%/18%) y retenciones (monto negativo)
             if tax.amount_type == "percent" and abs(tax.amount) in (16, 18):
                 continue
             if tax.amount < 0:
                 continue
             rate = abs(tax.amount)
             amount = round(line.price_subtotal * (rate / 100), 2)
-            additional.append({
-                "type": gae_type,
-                "rate": rate,
-                "amount": amount,
-            })
+            additional.append({"type": gae_type, "rate": rate, "amount": amount})
         return additional if additional else None
 
     def _compute_total_additional_taxes(self, invoice, ecf_type):
-        """
-        Calcula el total de impuestos adicionales (ISC, propina, telecom)
-        en toda la factura. No aplica para E41, E43, E47.
-
-        :param invoice: recordset de account.move.
-        :param ecf_type: str código ECF.
-        :return: float monto total.
-        """
         if ecf_type in ("41", "43", "47"):
             return 0.0
         total = 0.0
@@ -790,17 +717,59 @@ class GaeService:
     @staticmethod
     def _extract_error_message(response):
         """
-        Intenta extraer un mensaje de error legible de la respuesta HTTP.
-
-        :param response: objeto requests.Response.
-        :return: str con el mensaje de error.
+        Extrae un mensaje de error legible de la respuesta HTTP del GAE.
+        Maneja estructuras planas, arrays de errores y objetos anidados.
         """
         try:
             data = response.json()
-            # Intentar distintas claves comunes
-            for key in ("message", "Message", "error", "Error", "detail", "Detail"):
-                if key in data:
-                    return str(data[key])
-            return str(data)
+
+            # Extraer mensaje principal
+            main_msg = ""
+            for key in ("message", "Message", "error", "Error", "detail", "Detail", "title", "Title"):
+                if key in data and data[key]:
+                    main_msg = str(data[key])
+                    break
+
+            # Extraer detalles adicionales desde arrays de errores
+            detail_lines = []
+            for detail_key in ("details", "Details", "errors", "Errors", "validationErrors"):
+                raw = data.get(detail_key)
+                if not raw:
+                    continue
+                items = raw if isinstance(raw, list) else [raw]
+                for item in items[:15]:
+                    if isinstance(item, dict):
+                        code = item.get("code") or item.get("Code") or item.get("errorCode") or ""
+                        desc = (
+                            item.get("description") or item.get("Description")
+                            or item.get("message") or item.get("Message")
+                            or str(item)
+                        )
+                        detail_lines.append("[{}] {}".format(code, desc) if code else str(desc))
+                    elif item:
+                        detail_lines.append(str(item))
+                break
+
+            if main_msg and detail_lines:
+                return "{}\n• {}".format(main_msg, "\n• ".join(detail_lines))
+            if main_msg:
+                return main_msg
+            if detail_lines:
+                return "• " + "\n• ".join(detail_lines)
+
+            # Respuesta en forma de lista directa
+            if isinstance(data, list):
+                parts = []
+                for item in data[:15]:
+                    if isinstance(item, dict):
+                        desc = item.get("description") or item.get("message") or str(item)
+                        code = item.get("code") or item.get("Code") or ""
+                        parts.append("[{}] {}".format(code, desc) if code else str(desc))
+                    else:
+                        parts.append(str(item))
+                return "\n".join(parts) if parts else str(data)[:500]
+
+            return str(data)[:500]
+
         except ValueError:
-            return response.text or "Error desconocido"
+            return (response.text or "Error desconocido")[:500]
