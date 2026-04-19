@@ -26,6 +26,7 @@
     },
     "post_init_hook": "post_init_hook",
     "post_migrate": "post_migrate",
+    "images": ["static/description/screenshot.png"],
     "installable": True,
     "application": False,
     "auto_install": False,
